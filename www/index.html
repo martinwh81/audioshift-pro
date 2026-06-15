@@ -136,7 +136,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 .btn-zip{padding:13px 15px;border-radius:var(--r);border:1.5px solid var(--green);background:transparent;color:var(--green);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s,color .15s;white-space:nowrap;display:none;}
 .btn-zip:hover{background:var(--green);color:#fff;}
 .btn-zip.show{display:block;}
-.clear-btn{background:none;border:none;font-size:11px;color:var(--tx3);cursor:pointer;padding:2px 6px;border-radius:5px;}
+.btn-share-inline{padding:13px 15px;border-radius:var(--r);border:none;background:linear-gradient(135deg,var(--accent),var(--accentB));color:#fff;font-family:'Inter',sans-serif;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;display:none;box-shadow:0 2px 8px rgba(178,92,42,.18);}
+.btn-share-inline.show{display:block;}.clear-btn{background:none;border:none;font-size:11px;color:var(--tx3);cursor:pointer;padding:2px 6px;border-radius:5px;}
 .clear-btn:hover{color:var(--red);}
 
 /* ══════════════════════════════════
@@ -380,15 +381,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 .btn-bpm:disabled{opacity:.4;cursor:not-allowed;}
 
 /* ── Share card ── */
-.share-targets-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;}
-.share-target{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;}
-.share-target-ico{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;border:1px solid var(--border);background:var(--s2);transition:all .12s;}
-.share-target:hover .share-target-ico{border-color:var(--accent);background:#FDF0E8;}
-.share-target-lbl{font-size:9px;color:var(--tx3);text-align:center;}
-.btn-share{width:100%;padding:11px;border-radius:var(--r2);border:none;background:linear-gradient(135deg,var(--accent),var(--accentB));color:#fff;font-family:'Inter',sans-serif;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(178,92,42,.25);}
 .share-note{font-size:10px;color:var(--tx3);text-align:center;margin-top:6px;line-height:1.5;}
-.share-card{display:none;}
-.share-card.show{display:block;}
 
 </style>
 </head>
@@ -598,32 +591,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
     </div>
   </div>
 
-  <!-- Share card — shown after conversion -->
-  <div class="share-card" id="shareCard">
-    <div class="card">
-      <div class="card-title">📤 Share</div>
-      <div class="share-targets-grid">
-        <div class="share-target" data-share="whatsapp">
-          <div class="share-target-ico">💬</div>
-          <div class="share-target-lbl">WhatsApp</div>
-        </div>
-        <div class="share-target" data-share="email">
-          <div class="share-target-ico">📧</div>
-          <div class="share-target-lbl">Email</div>
-        </div>
-        <div class="share-target" data-share="drive">
-          <div class="share-target-ico">☁️</div>
-          <div class="share-target-lbl">Drive</div>
-        </div>
-        <div class="share-target" data-share="any">
-          <div class="share-target-ico">⋯</div>
-          <div class="share-target-lbl">More…</div>
-        </div>
-      </div>
-      <button class="btn-share" id="shareAllBtn">📤 Share via share sheet</button>
-      <div class="share-note">Opens Android's native share sheet — send to WhatsApp, Drive, email or any installed app. All buttons open the same share sheet.</div>
-    </div>
-  </div>
+  <!-- Share card removed — share button is now in the action row below -->
 
   <div class="info-note">
     <strong>MP3</strong> = lamejs. <strong>WAV/FLAC</strong> = pure JS. <strong>OGG/WebM/AAC</strong> = WebCodecs (hardware-accelerated, falls back to WAV/MP3). WebM outputs as <strong>.opus</strong> for better Android compatibility. All processing is on-device.
@@ -966,6 +934,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 <!-- ── Action buttons (sticky bottom) ── -->
 <div class="action-row">
   <button class="btn-convert" id="convertBtn" disabled>Convert All</button>
+  <button class="btn-share-inline" id="shareAllBtn">📤 Share</button>
   <button class="btn-zip" id="zipBtn">⬇ ZIP</button>
 </div>
 
@@ -1175,7 +1144,6 @@ const abLabel            = document.getElementById('abLabel');
 const bpmFileList        = document.getElementById('bpmFileList');
 const detectBpmAllBtn    = document.getElementById('detectBpmAllBtn');
 const bpmWaveBadge       = document.getElementById('bpmWaveBadge');
-const shareCard          = document.getElementById('shareCard');
 const shareAllBtn        = document.getElementById('shareAllBtn');
 
 // ════════════════════════════════════════════════════
@@ -1434,7 +1402,13 @@ function refreshUI() {
     convertBtn.disabled = !has;
   }
   zipBtn.classList.toggle('show', allDone && saveMode === 'zip');
-  if (shareCard) shareCard.classList.toggle('show', allDone);
+  // Share button shown when any files are done
+  // Show inline share button with done file count
+  const _doneCount = files.filter(f => f.status === 'done' && f.blob).length;
+  if (shareAllBtn) {
+    shareAllBtn.classList.toggle('show', _doneCount > 0);
+    shareAllBtn.textContent = _doneCount > 0 ? `📤 Share (${_doneCount})` : '📤 Share';
+  }
   // Refresh preview selector — defer slightly so file list is fully updated
   setTimeout(() => { if (typeof refreshPreviewSel === 'function') refreshPreviewSel(); }, 50);
 }
@@ -3206,24 +3180,24 @@ async function blobToBase64(blob) {
   return b64;
 }
 
-// ── Folder picker using capacitor-folder-picker plugin ──
-// Returns the selected folder URI or null
+// ── Folder picker using @capawesome/capacitor-file-picker plugin ──
 let _nativeFolderUri = null;
 async function nativePickFolder() {
-  const FolderPicker = _Cap.FolderPicker || _Cap['capacitor-folder-picker']?.FolderPicker;
-  if (!FolderPicker?.chooseFolder) {
-    // Fallback: use Documents/AudioShiftPro
-    _nativeFolderUri = '__documents__';
-    return 'Documents/AudioShiftPro/';
+  // Try @capawesome/capacitor-file-picker (Capacitor 6 compatible)
+  const FilePicker = _Cap.FilePicker || _Cap['CapawesomeCapacitorFilePicker'] || null;
+  if (FilePicker?.pickDirectory) {
+    try {
+      const result = await FilePicker.pickDirectory();
+      _nativeFolderUri = result?.path || result?.uri || null;
+      return _nativeFolderUri || 'Documents/AudioShiftPro/';
+    } catch(e) {
+      if (!String(e).toLowerCase().includes('cancel')) console.error('[FolderPicker]', e);
+      return null;
+    }
   }
-  try {
-    const result = await FolderPicker.chooseFolder();
-    _nativeFolderUri = result.path || result.uri || '__documents__';
-    return _nativeFolderUri;
-  } catch(e) {
-    if (!String(e).includes('cancel')) console.error('[FolderPicker]', e);
-    return null;
-  }
+  // Fallback: default Documents folder
+  _nativeFolderUri = '__documents__';
+  return 'Documents/AudioShiftPro/';
 }
 
 // ── Save file to selected native folder ──
@@ -3257,7 +3231,7 @@ async function nativeSaveFile(blob, fileName) {
 }
 
 // ── Native share ──
-async function nativeShareFiles(doneFiles, target) {
+async function nativeShareFiles(doneFiles) {
   // Resolve plugins — try multiple possible registered names
   const NativeFS = _Cap.Filesystem || _Cap.CapacitorFilesystem || null;
   const NativeSh = _Cap.Share || _Cap.CapacitorShare || null;
@@ -5349,89 +5323,54 @@ function detectBpm(buf) {
 //  FEATURE 15: WEB SHARE API
 // ════════════════════════════════════════════════════
 
-document.querySelectorAll('.share-target').forEach(el => {
-  el.addEventListener('click', () => shareFiles(el.dataset.share));
-});
-shareAllBtn.addEventListener('click', () => shareFiles('any'));
+shareAllBtn.addEventListener('click', () => shareFiles());
 
-async function shareFiles(target) {
+async function shareFiles() {
   const done = files.filter(f => f.status === 'done' && f.blob);
   if (!done.length) return;
 
-  const btn = document.getElementById('shareAllBtn');
-  const allBtns = document.querySelectorAll('.share-target');
-  const setLoading = (loading) => {
-    if (btn) { btn.textContent = loading ? '⏳ Preparing…' : '📤 Share via share sheet'; btn.disabled = loading; }
-    allBtns.forEach(b => b.style.opacity = loading ? '0.5' : '');
-  };
-
-  setLoading(true);
+  const btn = shareAllBtn;
+  const origText = btn?.textContent || '📤 Share';
+  if (btn) { btn.textContent = '⏳ Preparing…'; btn.disabled = true; }
 
   // ── Native APK share ──
   if (isNative) {
-    const ok = await nativeShareFiles(done, target);
-    setLoading(false);
+    const ok = await nativeShareFiles(done);
+    if (btn) { btn.textContent = origText; btn.disabled = false; }
     if (!ok) {
-      // Show error with debug info
       const pluginNames = Object.keys(_Cap).join(', ') || 'none';
-      console.log('[Share] Plugin list:', pluginNames);
-      alert('Share failed.\n\nAvailable plugins: ' + pluginNames + '\n\nCheck debug console for details.');
+      console.log('[Share] Available plugins:', pluginNames);
+      alert('Share failed.\n\nPlugins: ' + pluginNames);
     }
     return;
   }
 
-  // ── Browser share ──
+  // ── Browser share (Web Share API) ──
   try {
-    const shareableFiles = done.map(f => new File([f.blob], f.outName, { type: f.blob.type }));
-
-    // Build share payload based on target
-    let payload;
-    if (target === 'whatsapp') {
-      // WhatsApp share — use intent URL
-      if (shareableFiles.length === 1 && navigator.canShare?.({ files: shareableFiles })) {
-        payload = { files: shareableFiles, title: 'AudioShift Pro' };
-      } else {
-        window.open('https://wa.me/?text=AudioShift+Pro+converted+files', '_blank');
-        setLoading(false); return;
-      }
-    } else if (target === 'email') {
-      // Email — open mailto with files if possible, else mailto only
-      if (shareableFiles.length && navigator.canShare?.({ files: shareableFiles })) {
-        payload = { files: shareableFiles, title: 'AudioShift Pro converted files' };
-      } else {
-        window.location.href = 'mailto:?subject=AudioShift+Pro+converted+files&body=Files+attached';
-        setLoading(false); return;
-      }
-    } else if (target === 'drive') {
-      // Google Drive — open drive.google.com upload page
-      window.open('https://drive.google.com', '_blank');
-      setLoading(false); return;
-    } else {
-      payload = { files: shareableFiles, title: 'AudioShift converted files' };
-    }
-
     if (!navigator.share) {
-      alert('Web Share API not supported. Use the ⬇ download buttons instead.');
-      setLoading(false); return;
+      alert('Share not supported in this browser.\nUse the ⬇ download buttons instead.');
+      return;
     }
+    const shareableFiles = done.map(f => new File([f.blob], f.outName, { type: f.blob.type }));
+    const payload = { files: shareableFiles, title: 'AudioShift converted files' };
     if (navigator.canShare?.(payload)) {
       await navigator.share(payload);
     } else {
-      // Fallback: ZIP
-      const zip = typeof JSZip !== 'undefined' ? new JSZip() : null;
-      if (zip) {
+      // Fallback: share as ZIP
+      if (typeof JSZip !== 'undefined') {
+        const zip = new JSZip();
         done.forEach(f => zip.file(f.outName, f.blob));
-        const zb = await zip.generateAsync({ type: 'blob' });
-        const zf = new File([zb], 'audioshift-converted.zip', { type: 'application/zip' });
+        const zb  = await zip.generateAsync({ type: 'blob' });
+        const zf  = new File([zb], 'audioshift-converted.zip', { type: 'application/zip' });
         await navigator.share({ files: [zf], title: 'AudioShift converted files' });
       } else {
-        await navigator.share({ title: 'AudioShift converted files', text: 'Audio files converted by AudioShift Pro' });
+        await navigator.share({ title: 'AudioShift converted files', text: 'Files converted by AudioShift Pro' });
       }
     }
   } catch(e) {
-    if (e.name !== 'AbortError') console.error('Share failed:', e);
+    if (e.name !== 'AbortError') console.error('[Share]', e);
   } finally {
-    setLoading(false);
+    if (btn) { btn.textContent = origText; btn.disabled = false; }
   }
 }
 
