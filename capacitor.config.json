@@ -1,0 +1,16 @@
+{
+  "appId": "com.audioshiftpro.app",
+  "appName": "AudioShift Pro",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "launchAutoHide": true,
+      "backgroundColor": "#FAF8F4",
+      "showSpinner": false
+    }
+  }
+}
