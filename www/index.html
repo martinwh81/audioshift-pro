@@ -3246,40 +3246,75 @@ async function nativePickFolder() {
 }
 
 // ── Save file ──
+// Strategy:
+// 1. Always write to CACHE first (always writable, no permission needed)
+// 2. If user picked a SAF folder URI (content://...), use NativeFS.copy() to move there
+// 3. If default Documents folder, use NativeFS.writeFile with DOCUMENTS directory
 async function nativeSaveFile(blob, fileName) {
   const NativeFS = _Cap.Filesystem;
-  console.log('[NativeFS] Filesystem plugin:', !!NativeFS, 'fileName:', fileName, 'blobSize:', blob?.size, 'folderUri:', _nativeFolderUri);
-  if (!NativeFS) return false;
+  console.log('[NativeFS] fileName:', fileName, 'size:', blob?.size, 'folderUri:', _nativeFolderUri);
+  if (!NativeFS) { console.error('[NativeFS] plugin missing'); return false; }
+
+  // Sanitize filename for cache write — replace spaces with underscores temporarily
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const b64 = await blobToBase64(blob);
+
+  // Step 1: write to CACHE (always works)
+  let cacheUri = null;
   try {
-    const b64 = await blobToBase64(blob);
-    let res;
-    if (_nativeFolderUri && _nativeFolderUri !== '__documents__') {
-      // User picked folder — use absolute path, no directory enum
-      const fullPath = _nativeFolderUri.replace(/\/$/, '') + '/' + fileName;
-      console.log('[NativeFS] writing absolute path:', fullPath);
-      res = await NativeFS.writeFile({ path: fullPath, data: b64, recursive: true });
-    } else {
-      console.log('[NativeFS] writing DOCUMENTS/AudioShiftPro/', fileName);
-      res = await NativeFS.writeFile({
-        path: 'AudioShiftPro/' + fileName, data: b64,
-        directory: 'DOCUMENTS', recursive: true,
+    const cacheRes = await NativeFS.writeFile({
+      path: safeName, data: b64, directory: 'CACHE', recursive: true,
+    });
+    console.log('[NativeFS] cache write:', JSON.stringify(cacheRes));
+    // Get URI for copy operation
+    const uriRes = await NativeFS.getUri({ path: safeName, directory: 'CACHE' });
+    cacheUri = uriRes?.uri;
+    console.log('[NativeFS] cache URI:', cacheUri);
+  } catch(e) {
+    console.error('[NativeFS] cache write FAILED:', String(e?.message || e));
+    return false;
+  }
+
+  // Step 2a: user picked SAF folder — use copy() to SAF destination
+  if (_nativeFolderUri && _nativeFolderUri !== '__documents__') {
+    try {
+      // SAF URI tree → document URI for the file
+      const destUri = _nativeFolderUri + '/' + encodeURIComponent(fileName);
+      console.log('[NativeFS] copying to SAF:', destUri);
+      const copyRes = await NativeFS.copy({
+        from: safeName, directory: 'CACHE',
+        to: destUri,
       });
+      console.log('[NativeFS] copy result:', JSON.stringify(copyRes));
+      return true;
+    } catch(e) {
+      console.warn('[NativeFS] SAF copy failed:', String(e?.message || e), '— trying writeFile with full URI');
+      // Some versions support writeFile to SAF URI directly
+      try {
+        const b642 = await blobToBase64(blob);
+        const r = await NativeFS.writeFile({ path: _nativeFolderUri + '/' + fileName, data: b642 });
+        console.log('[NativeFS] direct URI write:', JSON.stringify(r));
+        return true;
+      } catch(e2) {
+        console.warn('[NativeFS] direct URI write also failed:', String(e2?.message || e2));
+        // Fall through to Documents save
+      }
     }
-    console.log('[NativeFS] writeFile OK:', JSON.stringify(res));
+  }
+
+  // Step 2b: write to Documents/AudioShiftPro/ (default or SAF fallback)
+  try {
+    const docsRes = await NativeFS.writeFile({
+      path: 'AudioShiftPro/' + fileName, data: b64,
+      directory: 'DOCUMENTS', recursive: true,
+    });
+    console.log('[NativeFS] DOCUMENTS write:', JSON.stringify(docsRes));
     return true;
   } catch(e) {
-    console.error('[NativeFS] writeFile FAILED:', String(e?.message || e));
-    // Fallback to CACHE dir
-    try {
-      console.log('[NativeFS] trying CACHE fallback...');
-      const b64 = await blobToBase64(blob);
-      const r = await NativeFS.writeFile({ path: fileName, data: b64, directory: 'CACHE', recursive: true });
-      console.log('[NativeFS] CACHE write OK:', JSON.stringify(r));
-      return true;
-    } catch(e2) {
-      console.error('[NativeFS] CACHE fallback FAILED:', String(e2?.message || e2));
-      return false;
-    }
+    console.error('[NativeFS] DOCUMENTS write FAILED:', String(e?.message || e));
+    // Last resort — file is at least in CACHE
+    console.log('[NativeFS] file is in CACHE as:', safeName, '(not in chosen folder)');
+    return !!cacheUri; // true if we at least cached it
   }
 }
 
@@ -3287,42 +3322,39 @@ async function nativeSaveFile(blob, fileName) {
 async function nativeShareFiles(doneFiles) {
   const NativeFS = _Cap.Filesystem;
   const NativeSh = _Cap.Share;
-  console.log('[Share] Filesystem:', !!NativeFS, 'Share:', !!NativeSh, 'count:', doneFiles.length);
+  console.log('[Share] plugins — Filesystem:', !!NativeFS, 'Share:', !!NativeSh);
   if (!NativeFS || !NativeSh) {
-    console.error('[Share] Missing plugins. Available:', Object.keys(_Cap).join(', '));
+    console.error('[Share] missing plugins:', Object.keys(_Cap).join(', '));
     return false;
   }
   try {
     const uris = [];
     for (const f of doneFiles) {
-      if (!f.blob || f.blob.size === 0) { console.error('[Share] empty blob for', f.outName); continue; }
-      console.log('[Share] caching:', f.outName, 'size:', f.blob.size);
+      if (!f.blob || f.blob.size === 0) { console.error('[Share] empty blob:', f.outName); continue; }
+      // Use underscore-safe name for cache file
+      const safeName = f.outName.replace(/[^a-zA-Z0-9._-]/g, '_');
+      console.log('[Share] writing to cache:', safeName, 'size:', f.blob.size);
       const b64 = await blobToBase64(f.blob);
-      // Get cache dir path first so we can construct a content URI
-      let res;
       try {
-        res = await NativeFS.writeFile({ path: f.outName, data: b64, directory: 'CACHE', recursive: true });
-        console.log('[Share] cache write result:', JSON.stringify(res));
+        await NativeFS.writeFile({ path: safeName, data: b64, directory: 'CACHE', recursive: true });
       } catch(we) {
         console.error('[Share] cache write failed:', String(we?.message || we));
         continue;
       }
-      // Get URI — try result.uri first, then getUri
-      let uri = res?.uri;
-      if (!uri) {
-        try {
-          const uriRes = await NativeFS.getUri({ path: f.outName, directory: 'CACHE' });
-          uri = uriRes?.uri;
-          console.log('[Share] getUri result:', JSON.stringify(uriRes));
-        } catch(ue) { console.warn('[Share] getUri failed:', String(ue)); }
+      // Get the file URI
+      try {
+        const uriRes = await NativeFS.getUri({ path: safeName, directory: 'CACHE' });
+        console.log('[Share] URI result:', JSON.stringify(uriRes));
+        if (uriRes?.uri) uris.push(uriRes.uri);
+        else console.warn('[Share] no URI for', safeName);
+      } catch(ue) {
+        console.error('[Share] getUri failed:', String(ue?.message || ue));
       }
-      if (uri) uris.push(uri);
-      else console.error('[Share] could not get URI for', f.outName);
     }
-    console.log('[Share] URIs to share:', JSON.stringify(uris));
-    if (!uris.length) { console.error('[Share] no valid URIs'); return false; }
-    const shareRes = await NativeSh.share({ title: 'AudioShift Pro', files: uris, dialogTitle: 'Share audio files' });
-    console.log('[Share] share result:', JSON.stringify(shareRes));
+    console.log('[Share] sharing URIs:', JSON.stringify(uris));
+    if (!uris.length) { console.error('[Share] no URIs to share'); return false; }
+    const res = await NativeSh.share({ title: 'AudioShift Pro', files: uris, dialogTitle: 'Share audio' });
+    console.log('[Share] done:', JSON.stringify(res));
     return true;
   } catch(e) {
     const msg = String(e?.message || e);
