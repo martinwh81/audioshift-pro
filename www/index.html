@@ -1275,6 +1275,17 @@ function setFolderHandle(handle) {
 }
 
 pickFolderBtn.addEventListener('click', async () => {
+  if (isNative) {
+    // On APK — no folder picker needed, files save directly to Downloads
+    await NativeFS?.requestPermissions?.();
+    folderPath.textContent = '📁 Downloads folder';
+    folderPath.classList.add('set');
+    // Set a sentinel so saveMode=folder knows to use native save
+    folderHandle = '__native__';
+    metaFolderPath.textContent = '📁 Downloads folder';
+    metaFolderPath.classList.add('set');
+    return;
+  }
   if (!('showDirectoryPicker' in window)) { alert('Folder saving requires Chrome on Android or desktop.'); return; }
   try { setFolderHandle(await window.showDirectoryPicker({ mode:'readwrite' })); } catch(e) {}
 });
@@ -2493,6 +2504,15 @@ document.querySelectorAll('.scope-toggle').forEach(btn => {
 });
 
 metaPickFolderBtn.addEventListener('click', async () => {
+  if (isNative) {
+    await NativeFS?.requestPermissions?.();
+    folderHandle = '__native__';
+    metaFolderPath.textContent = '📁 Downloads folder';
+    metaFolderPath.classList.add('set');
+    folderPath.textContent = '📁 Downloads folder';
+    folderPath.classList.add('set');
+    return;
+  }
   if (!('showDirectoryPicker' in window)) { alert('Folder saving requires Chrome on Android or desktop.'); return; }
   try { setFolderHandle(await window.showDirectoryPicker({ mode:'readwrite' })); } catch(e) {}
 });
@@ -2796,7 +2816,13 @@ async function resolvedFileName(dirHandle, desiredName) {
 }
 
 async function saveToFolder(dirHandle, fileName, blob, conflictPolicy) {
-  // Check existence
+  // ── Native APK path — save to Downloads via Capacitor Filesystem ──
+  if (dirHandle === '__native__') {
+    const ok = await nativeSaveFile(blob, fileName);
+    return { saved: ok, finalName: fileName };
+  }
+
+  // ── Browser path — File System Access API ──
   let exists = false;
   try { await dirHandle.getFileHandle(fileName); exists = true; } catch(e) {}
 
@@ -3032,6 +3058,9 @@ convertBtn.addEventListener('click', async () => {
   } else {
     setOverall(0, toProcess, `Starting… 0 / ${toProcess}`);
     await tick(); // let UI update before Workers start
+
+    // Show background processing notification on APK
+    if (isNative) await showConversionNotif(`Converting ${toProcess} file${toProcess>1?'s':''}…`);
     await Promise.all(
       toConvert.map(async (item) => {
         let counted = false;
@@ -3085,6 +3114,8 @@ convertBtn.addEventListener('click', async () => {
   convertBtn.style.background = ''; convertBtn.style.opacity = '';
   if (wakeLock) { try { await wakeLock.release(); } catch(e) {} wakeLock = null; }
   if (wakeLockBadge) wakeLockBadge.style.display = 'none';
+  // Clear background notification
+  if (isNative) await clearConversionNotif(files.filter(f=>f.status==='done').length, files.length);
   refreshUI();
 });
 
@@ -3149,6 +3180,96 @@ const _isStandalone = window.matchMedia('(display-mode: standalone)').matches
 })();
 //  Handles: STFT pitch shift + normalize + MP3/FLAC/WAV encode
 //  Runs on a separate thread per file — true parallelism
+// ════════════════════════════════════════════════════
+//  CAPACITOR NATIVE BRIDGE
+//  Guards all native API calls — falls back to browser
+//  APIs when running in Chrome (HTML version unchanged)
+// ════════════════════════════════════════════════════
+const isNative = !!(window.Capacitor?.isNativePlatform?.());
+const NativeFS             = isNative ? window.Capacitor?.Plugins?.Filesystem         : null;
+const NativeShare          = isNative ? window.Capacitor?.Plugins?.Share              : null;
+const NativeLN             = isNative ? window.Capacitor?.Plugins?.LocalNotifications : null;
+console.log('[Bridge] isNative:', isNative);
+
+// ── Native file save to Downloads (APK only) ──
+async function nativeSaveFile(blob, fileName) {
+  if (!NativeFS) return false;
+  try {
+    const arr = await blob.arrayBuffer();
+    // Convert to base64 in chunks to avoid stack overflow on large files
+    const bytes = new Uint8Array(arr);
+    let b64 = '';
+    const CHUNK = 8192;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
+    }
+    await NativeFS.writeFile({
+      path: 'Downloads/' + fileName,
+      data: b64,
+      directory: 'EXTERNAL_STORAGE',
+      recursive: true,
+    });
+    return true;
+  } catch(e) { console.error('[NativeFS]', e); return false; }
+}
+
+// ── Native share via Android share sheet (APK only) ──
+async function nativeShareFiles(doneFiles) {
+  if (!NativeShare || !NativeFS) return false;
+  try {
+    const uris = [];
+    for (const f of doneFiles) {
+      const arr   = await f.blob.arrayBuffer();
+      const bytes = new Uint8Array(arr);
+      let b64 = '';
+      const CHUNK = 8192;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
+      }
+      const res = await NativeFS.writeFile({
+        path: f.outName, data: b64,
+        directory: 'CACHE', recursive: true,
+      });
+      if (res?.uri) uris.push(res.uri);
+    }
+    if (uris.length) {
+      await NativeShare.share({ title: 'AudioShift Pro', files: uris });
+    }
+    return true;
+  } catch(e) {
+    if (!e.message?.includes('cancel')) console.error('[NativeShare]', e);
+    return false;
+  }
+}
+
+// ── Background processing notification (APK only) ──
+let _notifScheduled = false;
+async function showConversionNotif(text) {
+  if (!NativeLN) return;
+  try {
+    const perm = await NativeLN.requestPermissions();
+    if (perm?.display !== 'granted') return;
+    await NativeLN.schedule({ notifications: [{
+      id: 9001, title: '🎵 AudioShift Pro converting…',
+      body: text, ongoing: true, autoCancel: false,
+    }]});
+    _notifScheduled = true;
+  } catch(e) {}
+}
+async function clearConversionNotif(completedCount, totalCount) {
+  if (!NativeLN || !_notifScheduled) return;
+  try {
+    await NativeLN.cancel({ notifications: [{ id: 9001 }] });
+    await NativeLN.schedule({ notifications: [{
+      id: 9002,
+      title: '✅ AudioShift Pro',
+      body: `${completedCount} / ${totalCount} files converted`,
+      autoCancel: true,
+    }]});
+    _notifScheduled = false;
+  } catch(e) {}
+}
+
 //  WebCodecs (AAC/OGG/WebM) stays on main thread (hardware encoder)
 // ════════════════════════════════════════════════════
 
@@ -5132,6 +5253,18 @@ shareAllBtn.addEventListener('click', () => shareFiles('any'));
 async function shareFiles(target) {
   const done = files.filter(f => f.status === 'done' && f.blob);
   if (!done.length) return;
+
+  // ── Native APK share ──
+  if (isNative) {
+    const btn = document.getElementById('shareAllBtn');
+    if (btn) { btn.textContent = '⏳ Preparing…'; btn.disabled = true; }
+    const ok = await nativeShareFiles(done);
+    if (btn) { btn.textContent = '📤 Share via share sheet'; btn.disabled = false; }
+    if (!ok) alert('Share failed. Files are in Downloads folder.');
+    return;
+  }
+
+  // ── Browser share ──
   if (!navigator.share || !navigator.canShare) {
     alert('Web Share API not supported in this browser. Use the ⬇ individual download buttons instead.');
     return;
@@ -5142,7 +5275,6 @@ async function shareFiles(target) {
     if (navigator.canShare(payload)) {
       await navigator.share(payload);
     } else {
-      // Fall back: share as one ZIP
       const zip = new JSZip();
       done.forEach(f => zip.file(f.outName, f.blob));
       const zb = await zip.generateAsync({ type: 'blob' });
