@@ -621,7 +621,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
         </div>
       </div>
       <button class="btn-share" id="shareAllBtn">📤 Share via share sheet</button>
-      <div class="share-note">Opens Android's native share sheet — send to WhatsApp, Drive, email or any installed app.</div>
+      <div class="share-note">Opens Android's native share sheet — send to WhatsApp, Drive, email or any installed app. All buttons open the same share sheet.</div>
     </div>
   </div>
 
@@ -1276,11 +1276,17 @@ function setFolderHandle(handle) {
 
 pickFolderBtn.addEventListener('click', async () => {
   if (isNative) {
-    await NativeFS?.requestPermissions?.();
-    folderHandle = '__native_documents__';
-    const _lbl = '📁 Documents/AudioShiftPro/';
-    folderPath.textContent = _lbl; folderPath.classList.add('set');
-    metaFolderPath.textContent = _lbl; metaFolderPath.classList.add('set');
+    folderPath.textContent = '⏳ Opening folder picker...';
+    const picked = await nativePickFolder();
+    if (picked) {
+      const lbl = '📁 ' + (picked === 'Documents/AudioShiftPro/' ? 'Documents/AudioShiftPro/' : picked.split('/').pop() || picked);
+      folderPath.textContent = lbl; folderPath.classList.add('set');
+      metaFolderPath.textContent = lbl; metaFolderPath.classList.add('set');
+      folderHandle = '__native__';
+    } else {
+      folderPath.textContent = 'No folder selected';
+      folderPath.classList.remove('set');
+    }
     return;
   }
   if (!('showDirectoryPicker' in window)) { alert('Folder saving requires Chrome on Android or desktop.'); return; }
@@ -2502,11 +2508,17 @@ document.querySelectorAll('.scope-toggle').forEach(btn => {
 
 metaPickFolderBtn.addEventListener('click', async () => {
   if (isNative) {
-    await NativeFS?.requestPermissions?.();
-    folderHandle = '__native_documents__';
-    const _lbl2 = '📁 Documents/AudioShiftPro/';
-    metaFolderPath.textContent = _lbl2; metaFolderPath.classList.add('set');
-    folderPath.textContent = _lbl2; folderPath.classList.add('set');
+    metaFolderPath.textContent = '⏳ Opening folder picker...';
+    const picked = await nativePickFolder();
+    if (picked) {
+      const lbl = '📁 ' + (picked === 'Documents/AudioShiftPro/' ? 'Documents/AudioShiftPro/' : picked.split('/').pop() || picked);
+      metaFolderPath.textContent = lbl; metaFolderPath.classList.add('set');
+      folderPath.textContent = lbl; folderPath.classList.add('set');
+      folderHandle = '__native__';
+    } else {
+      metaFolderPath.textContent = 'No folder selected';
+      metaFolderPath.classList.remove('set');
+    }
     return;
   }
   if (!('showDirectoryPicker' in window)) { alert('Folder saving requires Chrome on Android or desktop.'); return; }
@@ -3177,117 +3189,195 @@ const _isStandalone = window.matchMedia('(display-mode: standalone)').matches
 //  Handles: STFT pitch shift + normalize + MP3/FLAC/WAV encode
 //  Runs on a separate thread per file — true parallelism
 // ════════════════════════════════════════════════════
-//  CAPACITOR NATIVE BRIDGE
-//  isNative = true only inside Capacitor APK
-//  All functions are NO-OP when running in browser
+//  CAPACITOR NATIVE BRIDGE v3
 // ════════════════════════════════════════════════════
 const isNative = !!(window.Capacitor?.isNativePlatform?.());
-const _Cap     = window.Capacitor?.Plugins || {};
-const NativeFS  = _Cap.Filesystem  || null;
-const NativeSh  = _Cap.Share       || null;
-const NativeFG  = _Cap.ForegroundService || _Cap.AndroidForegroundService || null;
-console.log('[Bridge] isNative:', isNative);
+const _Cap = window.Capacitor?.Plugins || {};
 
-const DIR_DOCUMENTS = 'DOCUMENTS';
-const DIR_CACHE     = 'CACHE';
-
-// Convert blob to base64 in chunks
+// Convert blob to base64 — pure binary, no data URI prefix
 async function blobToBase64(blob) {
-  const arr   = await blob.arrayBuffer();
-  const bytes = new Uint8Array(arr);
+  const buf   = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buf);
   let b64 = '';
-  const CHUNK = 8192;
-  for (let i = 0; i < bytes.length; i += CHUNK)
-    b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
+  // Process in 32KB chunks to avoid call stack overflow
+  for (let i = 0; i < bytes.length; i += 32768) {
+    b64 += btoa(String.fromCharCode.apply(null, bytes.subarray(i, i + 32768)));
+  }
   return b64;
 }
 
-// Save file to Documents/AudioShiftPro/ (findable in Files app)
-async function nativeSaveFile(blob, fileName) {
-  if (!NativeFS) return false;
+// ── Folder picker using capacitor-folder-picker plugin ──
+// Returns the selected folder URI or null
+let _nativeFolderUri = null;
+async function nativePickFolder() {
+  const FolderPicker = _Cap.FolderPicker || _Cap['capacitor-folder-picker']?.FolderPicker;
+  if (!FolderPicker?.chooseFolder) {
+    // Fallback: use Documents/AudioShiftPro
+    _nativeFolderUri = '__documents__';
+    return 'Documents/AudioShiftPro/';
+  }
   try {
-    const b64 = await blobToBase64(blob);
-    await NativeFS.writeFile({
-      path: 'AudioShiftPro/' + fileName, data: b64,
-      directory: DIR_DOCUMENTS, recursive: true,
-    });
-    return true;
+    const result = await FolderPicker.chooseFolder();
+    _nativeFolderUri = result.path || result.uri || '__documents__';
+    return _nativeFolderUri;
   } catch(e) {
-    console.error('[NativeFS]', e.message || e);
-    try {
-      const b64 = await blobToBase64(blob);
-      await NativeFS.writeFile({ path: fileName, data: b64, directory: DIR_CACHE, recursive: true });
-      return true;
-    } catch(e2) { return false; }
+    if (!String(e).includes('cancel')) console.error('[FolderPicker]', e);
+    return null;
   }
 }
 
-// Share files via Android native share sheet
-async function nativeShareFiles(doneFiles) {
-  if (!NativeSh || !NativeFS) return false;
+// ── Save file to selected native folder ──
+async function nativeSaveFile(blob, fileName) {
+  const NativeFS = _Cap.Filesystem;
+  if (!NativeFS) { console.warn('[NativeFS] Plugin not available'); return false; }
   try {
-    const uris = [];
-    for (const f of doneFiles) {
-      const b64 = await blobToBase64(f.blob);
-      const res = await NativeFS.writeFile({
-        path: f.outName, data: b64,
-        directory: DIR_CACHE, recursive: true,
+    const b64 = await blobToBase64(blob);
+    if (_nativeFolderUri && _nativeFolderUri !== '__documents__') {
+      // Save to user-picked folder using absolute path
+      await NativeFS.writeFile({
+        path:      _nativeFolderUri + '/' + fileName,
+        data:      b64,
+        recursive: true,
       });
-      if (res?.uri) uris.push(res.uri);
+    } else {
+      // Default: save to Documents/AudioShiftPro/
+      await NativeFS.writeFile({
+        path:      'AudioShiftPro/' + fileName,
+        data:      b64,
+        directory: 'DOCUMENTS',
+        recursive: true,
+      });
     }
-    if (uris.length) await NativeSh.share({ title: 'AudioShift Pro', files: uris, dialogTitle: 'Share audio files' });
+    console.log('[NativeFS] Saved:', fileName);
     return true;
   } catch(e) {
-    if (!String(e).toLowerCase().includes('cancel')) console.error('[NativeShare]', e);
+    console.error('[NativeFS] writeFile error:', e.message || e);
     return false;
   }
 }
 
-// Foreground Service — keeps WebView alive when app backgrounded
+// ── Native share ──
+async function nativeShareFiles(doneFiles, target) {
+  // Resolve plugins — try multiple possible registered names
+  const NativeFS = _Cap.Filesystem || _Cap.CapacitorFilesystem || null;
+  const NativeSh = _Cap.Share || _Cap.CapacitorShare || null;
+
+  console.log('[Share] NativeFS:', !!NativeFS, 'NativeSh:', !!NativeSh);
+  console.log('[Share] Available plugins:', Object.keys(_Cap).join(', '));
+
+  // If Share plugin unavailable, try Web Share API as fallback
+  if (!NativeSh) {
+    console.warn('[Share] Share plugin not available, trying Web Share API');
+    if (navigator.share) {
+      try {
+        const shareableFiles = doneFiles.map(f => new File([f.blob], f.outName, { type: f.blob.type }));
+        await navigator.share({ files: shareableFiles, title: 'AudioShift Pro' });
+        return true;
+      } catch(e) { console.error('[Share] Web Share fallback failed:', e); }
+    }
+    return false;
+  }
+
+  if (!NativeFS) {
+    console.warn('[Share] Filesystem plugin not available');
+    return false;
+  }
+
+  try {
+    const uris = [];
+    for (const f of doneFiles) {
+      console.log('[Share] Writing to cache:', f.outName, 'size:', f.blob.size);
+      const b64 = await blobToBase64(f.blob);
+      console.log('[Share] b64 length:', b64.length);
+      const res = await NativeFS.writeFile({
+        path:      f.outName,
+        data:      b64,
+        directory: 'CACHE',
+        recursive: true,
+      });
+      console.log('[Share] writeFile result:', JSON.stringify(res));
+      if (res?.uri) uris.push(res.uri);
+    }
+    console.log('[Share] URIs to share:', uris);
+    if (!uris.length) { console.error('[Share] No URIs generated'); return false; }
+
+    // Build share call — target specific apps where possible
+    const shareOpts = {
+      title:       'AudioShift Pro',
+      files:       uris,
+      dialogTitle: 'Share converted audio',
+    };
+
+    // On Android, we can't force a specific app via Capacitor Share directly
+    // The system share sheet will show all compatible apps
+    // WhatsApp/Email/Drive are all shown automatically in the sheet
+    await NativeSh.share(shareOpts);
+    return true;
+  } catch(e) {
+    const msg = String(e?.message || e);
+    if (!msg.toLowerCase().includes('cancel') && !msg.toLowerCase().includes('abort')) {
+      console.error('[Share] Failed:', msg);
+    }
+    return false;
+  }
+}
+
+// ── Foreground Service ──
+// CRITICAL: Must be started BEFORE conversion begins (before WebView can be backgrounded)
+// Uses @capawesome-team/capacitor-android-foreground-service
 let _fgRunning = false;
+const NativeFG = _Cap.ForegroundService || _Cap.AndroidForegroundService || null;
+
 async function startForegroundService(body) {
-  if (!NativeFG || _fgRunning) return;
+  if (!isNative || !NativeFG) return;
   try {
     await NativeFG.createNotificationChannel?.({
-      id: 'audioshift_fg', name: 'Conversion Progress',
-      description: 'Keeps AudioShift Pro running while converting',
+      id: 'audioshift_fg',
+      name: 'Audio Conversion',
+      description: 'Keeps AudioShift Pro running during conversion',
       importance: 3,
     });
     await NativeFG.startForegroundService({
-      id: 8001, title: 'AudioShift Pro',
-      body: body || 'Converting audio files...',
-      smallIcon: 'ic_stat_notify',
+      id:                    8001,
+      title:                 'AudioShift Pro',
+      body:                  body || 'Converting audio files...',
+      smallIcon:             'ic_stat_notify',
       notificationChannelId: 'audioshift_fg',
     });
     _fgRunning = true;
-  } catch(e) { console.warn('[FG] Start failed:', e.message || e); }
+    console.log('[FG] Foreground service started');
+  } catch(e) {
+    console.error('[FG] Start failed:', e.message || e);
+    // Try alternative method name
+    try {
+      await NativeFG.start?.({ notification: { title: 'AudioShift Pro', text: body || 'Converting...' } });
+      _fgRunning = true;
+    } catch(e2) { console.warn('[FG] Alt start also failed:', e2.message || e2); }
+  }
 }
 
 async function stopForegroundService(completedMsg) {
   if (!_fgRunning) return;
   try {
-    await NativeFG?.stopForegroundService?.();
+    await NativeFG?.stopForegroundService?.() || await NativeFG?.stop?.();
     _fgRunning = false;
-    // Show completion notification
+    // Show completion notification via LocalNotifications
     const NativeLN = _Cap.LocalNotifications;
     if (NativeLN) {
       await NativeLN.schedule({ notifications: [{
-        id: 8002, title: 'AudioShift Pro',
+        id: 8002,
+        title: 'AudioShift Pro',
         body: completedMsg || 'Conversion complete',
-        autoCancel: true, channelId: 'audioshift_fg',
+        autoCancel: true,
       }]});
     }
   } catch(e) { console.warn('[FG] Stop failed:', e.message || e); }
 }
 
-// Aliases used in convert loop
-const showConversionNotif  = (t) => startForegroundService(t);
+// Aliases
+const showConversionNotif  = startForegroundService;
 const clearConversionNotif = (n, t) => stopForegroundService(n + ' / ' + t + ' files converted');
 
-//  WebCodecs (AAC/OGG/WebM) stays on main thread (hardware encoder)
-// ════════════════════════════════════════════════════
-
-// ── Worker source (inlined as template literal, loaded via Blob URL) ──
 const WORKER_SRC = `
 'use strict';
 
@@ -5268,35 +5358,80 @@ async function shareFiles(target) {
   const done = files.filter(f => f.status === 'done' && f.blob);
   if (!done.length) return;
 
+  const btn = document.getElementById('shareAllBtn');
+  const allBtns = document.querySelectorAll('.share-target');
+  const setLoading = (loading) => {
+    if (btn) { btn.textContent = loading ? '⏳ Preparing…' : '📤 Share via share sheet'; btn.disabled = loading; }
+    allBtns.forEach(b => b.style.opacity = loading ? '0.5' : '');
+  };
+
+  setLoading(true);
+
   // ── Native APK share ──
   if (isNative) {
-    const btn = document.getElementById('shareAllBtn');
-    if (btn) { btn.textContent = '⏳ Preparing…'; btn.disabled = true; }
-    const ok = await nativeShareFiles(done);
-    if (btn) { btn.textContent = '📤 Share via share sheet'; btn.disabled = false; }
-    if (!ok) alert('Share failed. Files are in Downloads folder.');
+    const ok = await nativeShareFiles(done, target);
+    setLoading(false);
+    if (!ok) {
+      // Show error with debug info
+      const pluginNames = Object.keys(_Cap).join(', ') || 'none';
+      console.log('[Share] Plugin list:', pluginNames);
+      alert('Share failed.\n\nAvailable plugins: ' + pluginNames + '\n\nCheck debug console for details.');
+    }
     return;
   }
 
   // ── Browser share ──
-  if (!navigator.share || !navigator.canShare) {
-    alert('Web Share API not supported in this browser. Use the ⬇ individual download buttons instead.');
-    return;
-  }
   try {
     const shareableFiles = done.map(f => new File([f.blob], f.outName, { type: f.blob.type }));
-    const payload = { files: shareableFiles, title: 'AudioShift converted files' };
-    if (navigator.canShare(payload)) {
+
+    // Build share payload based on target
+    let payload;
+    if (target === 'whatsapp') {
+      // WhatsApp share — use intent URL
+      if (shareableFiles.length === 1 && navigator.canShare?.({ files: shareableFiles })) {
+        payload = { files: shareableFiles, title: 'AudioShift Pro' };
+      } else {
+        window.open('https://wa.me/?text=AudioShift+Pro+converted+files', '_blank');
+        setLoading(false); return;
+      }
+    } else if (target === 'email') {
+      // Email — open mailto with files if possible, else mailto only
+      if (shareableFiles.length && navigator.canShare?.({ files: shareableFiles })) {
+        payload = { files: shareableFiles, title: 'AudioShift Pro converted files' };
+      } else {
+        window.location.href = 'mailto:?subject=AudioShift+Pro+converted+files&body=Files+attached';
+        setLoading(false); return;
+      }
+    } else if (target === 'drive') {
+      // Google Drive — open drive.google.com upload page
+      window.open('https://drive.google.com', '_blank');
+      setLoading(false); return;
+    } else {
+      payload = { files: shareableFiles, title: 'AudioShift converted files' };
+    }
+
+    if (!navigator.share) {
+      alert('Web Share API not supported. Use the ⬇ download buttons instead.');
+      setLoading(false); return;
+    }
+    if (navigator.canShare?.(payload)) {
       await navigator.share(payload);
     } else {
-      const zip = new JSZip();
-      done.forEach(f => zip.file(f.outName, f.blob));
-      const zb = await zip.generateAsync({ type: 'blob' });
-      const zf = new File([zb], 'audioshift-converted.zip', { type: 'application/zip' });
-      await navigator.share({ files: [zf], title: 'AudioShift converted files' });
+      // Fallback: ZIP
+      const zip = typeof JSZip !== 'undefined' ? new JSZip() : null;
+      if (zip) {
+        done.forEach(f => zip.file(f.outName, f.blob));
+        const zb = await zip.generateAsync({ type: 'blob' });
+        const zf = new File([zb], 'audioshift-converted.zip', { type: 'application/zip' });
+        await navigator.share({ files: [zf], title: 'AudioShift converted files' });
+      } else {
+        await navigator.share({ title: 'AudioShift converted files', text: 'Audio files converted by AudioShift Pro' });
+      }
     }
   } catch(e) {
     if (e.name !== 'AbortError') console.error('Share failed:', e);
+  } finally {
+    setLoading(false);
   }
 }
 
