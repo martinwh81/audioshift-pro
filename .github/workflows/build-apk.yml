@@ -42,11 +42,11 @@ jobs:
 
       - name: Add Android permissions
         run: |
-          sed -i 's|</manifest>|    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />\n</manifest>|' android/app/src/main/AndroidManifest.xml
+          sed -i 's|</manifest>|    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />\n</manifest>|' android/app/src/main/AndroidManifest.xml
 
-      - name: Add Foreground Service to AndroidManifest
+      - name: Register ForegroundService in AndroidManifest
         run: |
-          sed -i 's|</application>|    <service android:name="io.capawesome.capacitorjs.plugins.foregroundservice.AndroidForegroundService" android:foregroundServiceType="dataSync" android:exported="false" />\n    </application>|' android/app/src/main/AndroidManifest.xml
+          sed -i 's|</application>|    <service\n        android:name="io.capawesome.capacitorjs.plugins.foregroundservice.AndroidForegroundService"\n        android:foregroundServiceType="dataSync"\n        android:exported="false" />\n    </application>|' android/app/src/main/AndroidManifest.xml
 
       - name: Sync Capacitor
         run: npx cap sync android
@@ -66,13 +66,7 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
-      - name: APK build info
+      - name: APK info
         run: |
-          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
-          if [ -f "$APK_PATH" ]; then
-            SIZE=$(du -sh "$APK_PATH" | cut -f1)
-            echo "✅ APK built successfully! Size: $SIZE"
-          else
-            echo "❌ APK not found"
-            exit 1
-          fi
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          [ -f "$APK" ] && echo "✅ $(du -sh $APK)" || { echo "❌ APK not found"; exit 1; }
