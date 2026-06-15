@@ -1276,14 +1276,11 @@ function setFolderHandle(handle) {
 
 pickFolderBtn.addEventListener('click', async () => {
   if (isNative) {
-    // On APK — no folder picker needed, files save directly to Downloads
     await NativeFS?.requestPermissions?.();
-    folderPath.textContent = '📁 Downloads folder';
-    folderPath.classList.add('set');
-    // Set a sentinel so saveMode=folder knows to use native save
-    folderHandle = '__native__';
-    metaFolderPath.textContent = '📁 Downloads folder';
-    metaFolderPath.classList.add('set');
+    folderHandle = '__native_documents__';
+    const _lbl = '📁 Documents/AudioShiftPro/';
+    folderPath.textContent = _lbl; folderPath.classList.add('set');
+    metaFolderPath.textContent = _lbl; metaFolderPath.classList.add('set');
     return;
   }
   if (!('showDirectoryPicker' in window)) { alert('Folder saving requires Chrome on Android or desktop.'); return; }
@@ -2506,11 +2503,10 @@ document.querySelectorAll('.scope-toggle').forEach(btn => {
 metaPickFolderBtn.addEventListener('click', async () => {
   if (isNative) {
     await NativeFS?.requestPermissions?.();
-    folderHandle = '__native__';
-    metaFolderPath.textContent = '📁 Downloads folder';
-    metaFolderPath.classList.add('set');
-    folderPath.textContent = '📁 Downloads folder';
-    folderPath.classList.add('set');
+    folderHandle = '__native_documents__';
+    const _lbl2 = '📁 Documents/AudioShiftPro/';
+    metaFolderPath.textContent = _lbl2; metaFolderPath.classList.add('set');
+    folderPath.textContent = _lbl2; folderPath.classList.add('set');
     return;
   }
   if (!('showDirectoryPicker' in window)) { alert('Folder saving requires Chrome on Android or desktop.'); return; }
@@ -2817,7 +2813,7 @@ async function resolvedFileName(dirHandle, desiredName) {
 
 async function saveToFolder(dirHandle, fileName, blob, conflictPolicy) {
   // ── Native APK path — save to Downloads via Capacitor Filesystem ──
-  if (dirHandle === '__native__') {
+  if (dirHandle === '__native_documents__' || dirHandle === '__native__') {
     const ok = await nativeSaveFile(blob, fileName);
     return { saved: ok, finalName: fileName };
   }
@@ -3182,93 +3178,111 @@ const _isStandalone = window.matchMedia('(display-mode: standalone)').matches
 //  Runs on a separate thread per file — true parallelism
 // ════════════════════════════════════════════════════
 //  CAPACITOR NATIVE BRIDGE
-//  Guards all native API calls — falls back to browser
-//  APIs when running in Chrome (HTML version unchanged)
+//  isNative = true only inside Capacitor APK
+//  All functions are NO-OP when running in browser
 // ════════════════════════════════════════════════════
 const isNative = !!(window.Capacitor?.isNativePlatform?.());
-const NativeFS             = isNative ? window.Capacitor?.Plugins?.Filesystem         : null;
-const NativeShare          = isNative ? window.Capacitor?.Plugins?.Share              : null;
-const NativeLN             = isNative ? window.Capacitor?.Plugins?.LocalNotifications : null;
+const _Cap     = window.Capacitor?.Plugins || {};
+const NativeFS  = _Cap.Filesystem  || null;
+const NativeSh  = _Cap.Share       || null;
+const NativeFG  = _Cap.ForegroundService || _Cap.AndroidForegroundService || null;
 console.log('[Bridge] isNative:', isNative);
 
-// ── Native file save to Downloads (APK only) ──
+const DIR_DOCUMENTS = 'DOCUMENTS';
+const DIR_CACHE     = 'CACHE';
+
+// Convert blob to base64 in chunks
+async function blobToBase64(blob) {
+  const arr   = await blob.arrayBuffer();
+  const bytes = new Uint8Array(arr);
+  let b64 = '';
+  const CHUNK = 8192;
+  for (let i = 0; i < bytes.length; i += CHUNK)
+    b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
+  return b64;
+}
+
+// Save file to Documents/AudioShiftPro/ (findable in Files app)
 async function nativeSaveFile(blob, fileName) {
   if (!NativeFS) return false;
   try {
-    const arr = await blob.arrayBuffer();
-    // Convert to base64 in chunks to avoid stack overflow on large files
-    const bytes = new Uint8Array(arr);
-    let b64 = '';
-    const CHUNK = 8192;
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-      b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
-    }
+    const b64 = await blobToBase64(blob);
     await NativeFS.writeFile({
-      path: 'Downloads/' + fileName,
-      data: b64,
-      directory: 'EXTERNAL_STORAGE',
-      recursive: true,
+      path: 'AudioShiftPro/' + fileName, data: b64,
+      directory: DIR_DOCUMENTS, recursive: true,
     });
     return true;
-  } catch(e) { console.error('[NativeFS]', e); return false; }
+  } catch(e) {
+    console.error('[NativeFS]', e.message || e);
+    try {
+      const b64 = await blobToBase64(blob);
+      await NativeFS.writeFile({ path: fileName, data: b64, directory: DIR_CACHE, recursive: true });
+      return true;
+    } catch(e2) { return false; }
+  }
 }
 
-// ── Native share via Android share sheet (APK only) ──
+// Share files via Android native share sheet
 async function nativeShareFiles(doneFiles) {
-  if (!NativeShare || !NativeFS) return false;
+  if (!NativeSh || !NativeFS) return false;
   try {
     const uris = [];
     for (const f of doneFiles) {
-      const arr   = await f.blob.arrayBuffer();
-      const bytes = new Uint8Array(arr);
-      let b64 = '';
-      const CHUNK = 8192;
-      for (let i = 0; i < bytes.length; i += CHUNK) {
-        b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
-      }
+      const b64 = await blobToBase64(f.blob);
       const res = await NativeFS.writeFile({
         path: f.outName, data: b64,
-        directory: 'CACHE', recursive: true,
+        directory: DIR_CACHE, recursive: true,
       });
       if (res?.uri) uris.push(res.uri);
     }
-    if (uris.length) {
-      await NativeShare.share({ title: 'AudioShift Pro', files: uris });
-    }
+    if (uris.length) await NativeSh.share({ title: 'AudioShift Pro', files: uris, dialogTitle: 'Share audio files' });
     return true;
   } catch(e) {
-    if (!e.message?.includes('cancel')) console.error('[NativeShare]', e);
+    if (!String(e).toLowerCase().includes('cancel')) console.error('[NativeShare]', e);
     return false;
   }
 }
 
-// ── Background processing notification (APK only) ──
-let _notifScheduled = false;
-async function showConversionNotif(text) {
-  if (!NativeLN) return;
+// Foreground Service — keeps WebView alive when app backgrounded
+let _fgRunning = false;
+async function startForegroundService(body) {
+  if (!NativeFG || _fgRunning) return;
   try {
-    const perm = await NativeLN.requestPermissions();
-    if (perm?.display !== 'granted') return;
-    await NativeLN.schedule({ notifications: [{
-      id: 9001, title: '🎵 AudioShift Pro converting…',
-      body: text, ongoing: true, autoCancel: false,
-    }]});
-    _notifScheduled = true;
-  } catch(e) {}
+    await NativeFG.createNotificationChannel?.({
+      id: 'audioshift_fg', name: 'Conversion Progress',
+      description: 'Keeps AudioShift Pro running while converting',
+      importance: 3,
+    });
+    await NativeFG.startForegroundService({
+      id: 8001, title: 'AudioShift Pro',
+      body: body || 'Converting audio files...',
+      smallIcon: 'ic_stat_notify',
+      notificationChannelId: 'audioshift_fg',
+    });
+    _fgRunning = true;
+  } catch(e) { console.warn('[FG] Start failed:', e.message || e); }
 }
-async function clearConversionNotif(completedCount, totalCount) {
-  if (!NativeLN || !_notifScheduled) return;
+
+async function stopForegroundService(completedMsg) {
+  if (!_fgRunning) return;
   try {
-    await NativeLN.cancel({ notifications: [{ id: 9001 }] });
-    await NativeLN.schedule({ notifications: [{
-      id: 9002,
-      title: '✅ AudioShift Pro',
-      body: `${completedCount} / ${totalCount} files converted`,
-      autoCancel: true,
-    }]});
-    _notifScheduled = false;
-  } catch(e) {}
+    await NativeFG?.stopForegroundService?.();
+    _fgRunning = false;
+    // Show completion notification
+    const NativeLN = _Cap.LocalNotifications;
+    if (NativeLN) {
+      await NativeLN.schedule({ notifications: [{
+        id: 8002, title: 'AudioShift Pro',
+        body: completedMsg || 'Conversion complete',
+        autoCancel: true, channelId: 'audioshift_fg',
+      }]});
+    }
+  } catch(e) { console.warn('[FG] Stop failed:', e.message || e); }
 }
+
+// Aliases used in convert loop
+const showConversionNotif  = (t) => startForegroundService(t);
+const clearConversionNotif = (n, t) => stopForegroundService(n + ' / ' + t + ' files converted');
 
 //  WebCodecs (AAC/OGG/WebM) stays on main thread (hardware encoder)
 // ════════════════════════════════════════════════════
