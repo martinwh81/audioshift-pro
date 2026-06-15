@@ -1355,7 +1355,31 @@ function updateFileItem(id) {
   const dl   = document.getElementById('fdl-' + id);
   if (!el) return;
   el.className = 'f-item' + (item.status !== 'pending' ? ' ' + item.status : '');
-  if (item.status === 'done')      { ico.textContent = '✅'; ico.className = 'f-ico done'; info.textContent = item.outName + ' · ' + fmtBytes(item.blob.size); prog.style.width = '100%'; if(item.blob){ dl.href = URL.createObjectURL(item.blob); dl.download = item.outName; dl.classList.add('show'); } }
+  if (item.status === 'done') {
+    ico.textContent = '✅'; ico.className = 'f-ico done';
+    info.textContent = item.outName + ' · ' + fmtBytes(item.blob.size);
+    prog.style.width = '100%';
+    if (item.blob) {
+      if (isNative) {
+        // On APK — download link doesn't work in WebView, use save button instead
+        dl.href = '#';
+        dl.download = '';
+        dl.onclick = async (e) => {
+          e.preventDefault();
+          dl.textContent = '⏳';
+          const ok = await nativeSaveFile(item.blob, item.outName);
+          dl.textContent = ok ? '✅' : '✗';
+          setTimeout(() => { dl.textContent = '⬇'; }, 2000);
+        };
+        dl.classList.add('show');
+      } else {
+        dl.href = URL.createObjectURL(item.blob);
+        dl.download = item.outName;
+        dl.onclick = null;
+        dl.classList.add('show');
+      }
+    }
+  }
   else if (item.status === 'error'){ ico.textContent = '❌'; ico.className = 'f-ico error'; dl.classList.remove('show'); }
   else if (item.status === 'cancelled'){ ico.textContent = '⚠️'; ico.className = 'f-ico error'; dl.classList.remove('show');
     info.textContent = fmtBytes(item.file.size) + ' · cancelled'; }
@@ -3105,12 +3129,32 @@ function setOverall(done, total, lbl) { overallFill.style.width=Math.round(done/
 
 // ── ZIP ──
 zipBtn.addEventListener('click', async () => {
-  const zip = new JSZip();
-  files.filter(f=>f.status==='done'&&f.blob).forEach(f=>zip.file(f.outName,f.blob));
-  zipBtn.textContent='⏳ Zipping…'; zipBtn.disabled=true;
-  const zb = await zip.generateAsync({type:'blob'});
-  const a = document.createElement('a'); a.href=URL.createObjectURL(zb); a.download='audioshift-batch.zip'; a.click();
-  zipBtn.textContent='⬇ ZIP'; zipBtn.disabled=false;
+  const doneFiles = files.filter(f => f.status === 'done' && f.blob);
+  if (!doneFiles.length) return;
+  zipBtn.textContent = '⏳ Zipping…'; zipBtn.disabled = true;
+  try {
+    if (isNative) {
+      // On APK — save each file individually (no ZIP needed, files go to Documents)
+      let saved = 0;
+      for (const f of doneFiles) {
+        const ok = await nativeSaveFile(f.blob, f.outName);
+        if (ok) saved++;
+      }
+      zipBtn.textContent = saved > 0 ? `✅ Saved ${saved} file${saved>1?'s':''}` : '✗ Save failed';
+      setTimeout(() => { zipBtn.textContent = '⬇ ZIP'; zipBtn.disabled = false; }, 2500);
+      return;
+    }
+    // Browser — create ZIP and download
+    const zip = new JSZip();
+    doneFiles.forEach(f => zip.file(f.outName, f.blob));
+    const zb = await zip.generateAsync({ type: 'blob' });
+    const a  = document.createElement('a');
+    a.href = URL.createObjectURL(zb); a.download = 'audioshift-batch.zip'; a.click();
+  } catch(e) {
+    console.error('[ZIP]', e);
+  } finally {
+    if (!isNative) { zipBtn.textContent = '⬇ ZIP'; zipBtn.disabled = false; }
+  }
 });
 
 
@@ -3173,125 +3217,117 @@ async function blobToBase64(blob) {
   const buf   = await blob.arrayBuffer();
   const bytes = new Uint8Array(buf);
   let b64 = '';
-  // Process in 32KB chunks to avoid call stack overflow
-  for (let i = 0; i < bytes.length; i += 32768) {
+  for (let i = 0; i < bytes.length; i += 32768)
     b64 += btoa(String.fromCharCode.apply(null, bytes.subarray(i, i + 32768)));
-  }
+  console.log('[b64] size:', blob.size, 'b64 len:', b64.length);
   return b64;
 }
 
-// ── Folder picker using @capawesome/capacitor-file-picker plugin ──
+// ── Folder picker ──
 let _nativeFolderUri = null;
 async function nativePickFolder() {
-  // Try @capawesome/capacitor-file-picker (Capacitor 6 compatible)
-  const FilePicker = _Cap.FilePicker || _Cap['CapawesomeCapacitorFilePicker'] || null;
+  const FilePicker = _Cap.FilePicker || null;
+  console.log('[FolderPicker] available:', !!FilePicker, 'pickDirectory:', !!FilePicker?.pickDirectory);
   if (FilePicker?.pickDirectory) {
     try {
       const result = await FilePicker.pickDirectory();
+      console.log('[FolderPicker] result:', JSON.stringify(result));
       _nativeFolderUri = result?.path || result?.uri || null;
+      console.log('[FolderPicker] _nativeFolderUri set to:', _nativeFolderUri);
       return _nativeFolderUri || 'Documents/AudioShiftPro/';
     } catch(e) {
-      if (!String(e).toLowerCase().includes('cancel')) console.error('[FolderPicker]', e);
+      if (!String(e).toLowerCase().includes('cancel')) console.error('[FolderPicker]', String(e));
       return null;
     }
   }
-  // Fallback: default Documents folder
+  console.warn('[FolderPicker] pickDirectory not available, using default');
   _nativeFolderUri = '__documents__';
   return 'Documents/AudioShiftPro/';
 }
 
-// ── Save file to selected native folder ──
+// ── Save file ──
 async function nativeSaveFile(blob, fileName) {
   const NativeFS = _Cap.Filesystem;
-  if (!NativeFS) { console.warn('[NativeFS] Plugin not available'); return false; }
+  console.log('[NativeFS] Filesystem plugin:', !!NativeFS, 'fileName:', fileName, 'blobSize:', blob?.size, 'folderUri:', _nativeFolderUri);
+  if (!NativeFS) return false;
   try {
     const b64 = await blobToBase64(blob);
+    let res;
     if (_nativeFolderUri && _nativeFolderUri !== '__documents__') {
-      // Save to user-picked folder using absolute path
-      await NativeFS.writeFile({
-        path:      _nativeFolderUri + '/' + fileName,
-        data:      b64,
-        recursive: true,
-      });
+      // User picked folder — use absolute path, no directory enum
+      const fullPath = _nativeFolderUri.replace(/\/$/, '') + '/' + fileName;
+      console.log('[NativeFS] writing absolute path:', fullPath);
+      res = await NativeFS.writeFile({ path: fullPath, data: b64, recursive: true });
     } else {
-      // Default: save to Documents/AudioShiftPro/
-      await NativeFS.writeFile({
-        path:      'AudioShiftPro/' + fileName,
-        data:      b64,
-        directory: 'DOCUMENTS',
-        recursive: true,
+      console.log('[NativeFS] writing DOCUMENTS/AudioShiftPro/', fileName);
+      res = await NativeFS.writeFile({
+        path: 'AudioShiftPro/' + fileName, data: b64,
+        directory: 'DOCUMENTS', recursive: true,
       });
     }
-    console.log('[NativeFS] Saved:', fileName);
+    console.log('[NativeFS] writeFile OK:', JSON.stringify(res));
     return true;
   } catch(e) {
-    console.error('[NativeFS] writeFile error:', e.message || e);
-    return false;
+    console.error('[NativeFS] writeFile FAILED:', String(e?.message || e));
+    // Fallback to CACHE dir
+    try {
+      console.log('[NativeFS] trying CACHE fallback...');
+      const b64 = await blobToBase64(blob);
+      const r = await NativeFS.writeFile({ path: fileName, data: b64, directory: 'CACHE', recursive: true });
+      console.log('[NativeFS] CACHE write OK:', JSON.stringify(r));
+      return true;
+    } catch(e2) {
+      console.error('[NativeFS] CACHE fallback FAILED:', String(e2?.message || e2));
+      return false;
+    }
   }
 }
 
 // ── Native share ──
 async function nativeShareFiles(doneFiles) {
-  // Resolve plugins — try multiple possible registered names
-  const NativeFS = _Cap.Filesystem || _Cap.CapacitorFilesystem || null;
-  const NativeSh = _Cap.Share || _Cap.CapacitorShare || null;
-
-  console.log('[Share] NativeFS:', !!NativeFS, 'NativeSh:', !!NativeSh);
-  console.log('[Share] Available plugins:', Object.keys(_Cap).join(', '));
-
-  // If Share plugin unavailable, try Web Share API as fallback
-  if (!NativeSh) {
-    console.warn('[Share] Share plugin not available, trying Web Share API');
-    if (navigator.share) {
-      try {
-        const shareableFiles = doneFiles.map(f => new File([f.blob], f.outName, { type: f.blob.type }));
-        await navigator.share({ files: shareableFiles, title: 'AudioShift Pro' });
-        return true;
-      } catch(e) { console.error('[Share] Web Share fallback failed:', e); }
-    }
+  const NativeFS = _Cap.Filesystem;
+  const NativeSh = _Cap.Share;
+  console.log('[Share] Filesystem:', !!NativeFS, 'Share:', !!NativeSh, 'count:', doneFiles.length);
+  if (!NativeFS || !NativeSh) {
+    console.error('[Share] Missing plugins. Available:', Object.keys(_Cap).join(', '));
     return false;
   }
-
-  if (!NativeFS) {
-    console.warn('[Share] Filesystem plugin not available');
-    return false;
-  }
-
   try {
     const uris = [];
     for (const f of doneFiles) {
-      console.log('[Share] Writing to cache:', f.outName, 'size:', f.blob.size);
+      if (!f.blob || f.blob.size === 0) { console.error('[Share] empty blob for', f.outName); continue; }
+      console.log('[Share] caching:', f.outName, 'size:', f.blob.size);
       const b64 = await blobToBase64(f.blob);
-      console.log('[Share] b64 length:', b64.length);
-      const res = await NativeFS.writeFile({
-        path:      f.outName,
-        data:      b64,
-        directory: 'CACHE',
-        recursive: true,
-      });
-      console.log('[Share] writeFile result:', JSON.stringify(res));
-      if (res?.uri) uris.push(res.uri);
+      // Get cache dir path first so we can construct a content URI
+      let res;
+      try {
+        res = await NativeFS.writeFile({ path: f.outName, data: b64, directory: 'CACHE', recursive: true });
+        console.log('[Share] cache write result:', JSON.stringify(res));
+      } catch(we) {
+        console.error('[Share] cache write failed:', String(we?.message || we));
+        continue;
+      }
+      // Get URI — try result.uri first, then getUri
+      let uri = res?.uri;
+      if (!uri) {
+        try {
+          const uriRes = await NativeFS.getUri({ path: f.outName, directory: 'CACHE' });
+          uri = uriRes?.uri;
+          console.log('[Share] getUri result:', JSON.stringify(uriRes));
+        } catch(ue) { console.warn('[Share] getUri failed:', String(ue)); }
+      }
+      if (uri) uris.push(uri);
+      else console.error('[Share] could not get URI for', f.outName);
     }
-    console.log('[Share] URIs to share:', uris);
-    if (!uris.length) { console.error('[Share] No URIs generated'); return false; }
-
-    // Build share call — target specific apps where possible
-    const shareOpts = {
-      title:       'AudioShift Pro',
-      files:       uris,
-      dialogTitle: 'Share converted audio',
-    };
-
-    // On Android, we can't force a specific app via Capacitor Share directly
-    // The system share sheet will show all compatible apps
-    // WhatsApp/Email/Drive are all shown automatically in the sheet
-    await NativeSh.share(shareOpts);
+    console.log('[Share] URIs to share:', JSON.stringify(uris));
+    if (!uris.length) { console.error('[Share] no valid URIs'); return false; }
+    const shareRes = await NativeSh.share({ title: 'AudioShift Pro', files: uris, dialogTitle: 'Share audio files' });
+    console.log('[Share] share result:', JSON.stringify(shareRes));
     return true;
   } catch(e) {
     const msg = String(e?.message || e);
-    if (!msg.toLowerCase().includes('cancel') && !msg.toLowerCase().includes('abort')) {
-      console.error('[Share] Failed:', msg);
-    }
+    if (!msg.toLowerCase().includes('cancel') && !msg.toLowerCase().includes('abort'))
+      console.error('[Share] FAILED:', msg);
     return false;
   }
 }
