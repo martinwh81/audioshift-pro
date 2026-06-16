@@ -984,7 +984,8 @@ function loadScript(src) {
 window._cdnReady = Promise.all([
   loadScript('https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js'),
   loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'),
-  loadScript('https://unpkg.com/capacitor-blob-writer@1.0.17/dist/plugin.js'),
+  // Load blob-writer from local bundle (copied during APK build, no CDN needed)
+  loadScript('plugins/blob-writer.js'),
 ]);
 </script>
 <script>
@@ -3323,13 +3324,21 @@ async function triggerBlobDownload(blob, fileName) {
 // No base64 conversion, no IPC size limits, no OOM errors
 // See: https://github.com/diachedelic/capacitor-blob-writer
 
-// Get write_blob function from the plugin (loaded as a global via Capacitor)
+// Get write_blob function from the plugin
 function getWriteBlob() {
-  // capacitor-blob-writer exports as window.CapacitorBlobWriter or via Capacitor plugins
-  return window.CapacitorBlobWriter?.write_blob
-      || window.write_blob
-      || _Cap.BlobWriter?.writeBlob
-      || null;
+  // capacitor-blob-writer exports write_blob as a named export
+  // After loading plugin.js it registers itself in various ways
+  const wb = window.CapacitorBlobWriter?.write_blob  // namespace export
+           || window.write_blob                       // global export
+           || window.BlobWriter?.write_blob           // alternative namespace
+           || _Cap.BlobWriter?.write_blob;            // Capacitor plugin registry
+  console.log('[blob-writer] getWriteBlob check:',
+    'CapacitorBlobWriter:', !!window.CapacitorBlobWriter,
+    'write_blob:', !!window.write_blob,
+    'BlobWriter:', !!window.BlobWriter,
+    '_Cap.BlobWriter:', !!_Cap.BlobWriter,
+    'result:', !!wb);
+  return wb || null;
 }
 
 // Write blob to CACHE using native blob writer
