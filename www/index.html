@@ -3274,15 +3274,30 @@ async function nativePickFolder() {
   }
 }
 
-// Trigger blob download — Android DownloadManager intercepts and saves to Downloads/
+// Trigger file download in Capacitor WebView
 function triggerBlobDownload(blob, fileName) {
   return new Promise(resolve => {
     const url = URL.createObjectURL(blob);
-    const a   = document.createElement('a');
+    console.log('[download] blobUrl created, size:', blob.size, 'type:', blob.type, 'fileName:', fileName);
+    console.log('[download] blobUrl:', url.substring(0, 60));
+    // Try window.open first
+    try {
+      const win = window.open(url, '_blank');
+      console.log('[download] window.open result:', win ? 'opened' : 'null/blocked');
+      if (win) {
+        setTimeout(() => { URL.revokeObjectURL(url); resolve(true); }, 2000);
+        return;
+      }
+    } catch(e) { console.warn('[download] window.open threw:', String(e?.message||e)); }
+    // Fallback: anchor click
+    console.log('[download] trying anchor click fallback');
+    const a = document.createElement('a');
     a.href = url; a.download = fileName;
     a.style.display = 'none';
     document.body.appendChild(a);
+    console.log('[download] anchor created, href:', a.href.substring(0,60), 'download:', a.download);
     a.click();
+    console.log('[download] anchor clicked');
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); resolve(true); }, 1000);
   });
 }
@@ -3293,85 +3308,187 @@ async function writeToCacheChunked(NativeFS, safeName, blob) {
   const buf   = await blob.arrayBuffer();
   const bytes = new Uint8Array(buf);
   const n     = Math.ceil(bytes.length / CHUNK);
-  console.log('[cache] writing', blob.size, 'bytes,', n, 'chunks:', safeName);
-  for (let i = 0; i < n; i++) {
-    const slice = bytes.subarray(i*CHUNK, Math.min((i+1)*CHUNK, bytes.length));
+  console.log('[cache] START writing', blob.size, 'bytes,', n, 'chunks, file:', safeName);
+  console.log('[cache] NativeFS.writeFile available:', typeof NativeFS.writeFile);
+  console.log('[cache] NativeFS.appendFile available:', typeof NativeFS.appendFile);
+  console.log('[cache] NativeFS.getUri available:', typeof NativeFS.getUri);
+
+  if (n === 1) {
     let b64 = '';
-    for (let j = 0; j < slice.length; j += 8192)
-      b64 += btoa(String.fromCharCode.apply(null, slice.subarray(j, j+8192)));
-    if (i === 0) {
-      await NativeFS.writeFile({ path: safeName, data: b64, directory: 'CACHE', recursive: true });
-      console.log('[cache] created');
-    } else {
-      await NativeFS.appendFile({ path: safeName, data: b64, directory: 'CACHE', encoding: 'base64' });
-      if (i % 20 === 0) console.log('[cache] chunk', i, '/', n);
+    for (let j = 0; j < bytes.length; j += 8192)
+      b64 += btoa(String.fromCharCode.apply(null, bytes.subarray(j, j+8192)));
+    console.log('[cache] single chunk b64 length:', b64.length);
+    try {
+      const res = await NativeFS.writeFile({ path: safeName, data: b64, directory: 'CACHE', recursive: true });
+      console.log('[cache] single writeFile result:', JSON.stringify(res));
+    } catch(e) {
+      console.error('[cache] single writeFile FAILED:', String(e?.message||e), JSON.stringify(e));
+      throw e;
+    }
+  } else {
+    for (let i = 0; i < n; i++) {
+      const slice = bytes.subarray(i*CHUNK, Math.min((i+1)*CHUNK, bytes.length));
+      let b64 = '';
+      for (let j = 0; j < slice.length; j += 8192)
+        b64 += btoa(String.fromCharCode.apply(null, slice.subarray(j, j+8192)));
+
+      if (i === 0) {
+        console.log('[cache] chunk 0: b64 length', b64.length, '— calling writeFile...');
+        try {
+          const res = await NativeFS.writeFile({ path: safeName, data: b64, directory: 'CACHE', recursive: true });
+          console.log('[cache] chunk 0 writeFile result:', JSON.stringify(res));
+        } catch(e) {
+          console.error('[cache] chunk 0 writeFile FAILED:', String(e?.message||e), JSON.stringify(e));
+          throw e;
+        }
+      } else {
+        if (i === 1) console.log('[cache] chunk 1: b64 length', b64.length, '— calling appendFile...');
+        try {
+          const res = await NativeFS.appendFile({ path: safeName, data: b64, directory: 'CACHE' });
+          if (i === 1) console.log('[cache] chunk 1 appendFile result:', JSON.stringify(res));
+          if (i % 20 === 0) console.log('[cache] chunk', i, '/', n, 'OK');
+        } catch(ae) {
+          console.error('[cache] appendFile FAILED at chunk', i, ':', String(ae?.message||ae), JSON.stringify(ae));
+          throw ae;
+        }
+      }
     }
   }
-  console.log('[cache] done:', safeName);
+  console.log('[cache] all chunks written for:', safeName);
+
   try {
+    console.log('[cache] calling getUri for:', safeName);
     const res = await NativeFS.getUri({ path: safeName, directory: 'CACHE' });
-    console.log('[cache] URI:', res?.uri);
+    console.log('[cache] getUri result:', JSON.stringify(res));
     return res?.uri || null;
-  } catch(e) { console.warn('[cache] getUri failed:', String(e?.message||e)); return null; }
+  } catch(e) {
+    console.error('[cache] getUri FAILED:', String(e?.message||e), JSON.stringify(e));
+    return null;
+  }
 }
 
-// Save file — blob download if no folder chosen, cache+copy if folder chosen
+// Save file
 async function nativeSaveFile(blob, fileName) {
-  console.log('[save]', fileName, 'size:', blob?.size, 'folderUri:', _nativeFolderUri);
+  console.log('=== [save] START ===');
+  console.log('[save] fileName:', fileName);
+  console.log('[save] blob size:', blob?.size, 'type:', blob?.type);
+  console.log('[save] _nativeFolderUri:', _nativeFolderUri);
+  console.log('[save] isNative:', isNative);
+  console.log('[save] Filesystem plugin:', !!_Cap.Filesystem);
+
   if (!_nativeFolderUri) {
-    console.log('[save] no folder — blob download');
+    console.log('[save] no folder set — using blob download');
+    const result = await triggerBlobDownload(blob, fileName);
+    console.log('[save] blob download result:', result);
+    return result;
+  }
+
+  const NativeFS = _Cap.Filesystem;
+  if (!NativeFS) {
+    console.warn('[save] Filesystem plugin missing — blob download fallback');
     return triggerBlobDownload(blob, fileName);
   }
-  const NativeFS = _Cap.Filesystem;
-  if (!NativeFS) { return triggerBlobDownload(blob, fileName); }
-  try { await NativeFS.requestPermissions(); } catch(e) {}
+
+  try {
+    const perm = await NativeFS.requestPermissions();
+    console.log('[save] permissions:', JSON.stringify(perm));
+  } catch(e) { console.warn('[save] requestPermissions error:', String(e?.message||e)); }
+
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const cacheUri = await writeToCacheChunked(NativeFS, safeName, blob);
+  console.log('[save] safeName:', safeName);
+
+  let cacheUri = null;
+  try {
+    cacheUri = await writeToCacheChunked(NativeFS, safeName, blob);
+    console.log('[save] cacheUri:', cacheUri);
+  } catch(e) {
+    console.error('[save] writeToCacheChunked FAILED:', String(e?.message||e));
+    console.log('[save] falling back to blob download');
+    return triggerBlobDownload(blob, fileName);
+  }
+
   if (cacheUri) {
     try {
       const decoded = decodeURIComponent(_nativeFolderUri);
-      const match   = decoded.match(/primary:(.+)/);
+      console.log('[save] decoded folderUri:', decoded);
+      const match = decoded.match(/primary:(.+)/);
+      console.log('[save] path match:', match ? match[1] : 'NO MATCH');
       if (match) {
         const dest = '/storage/emulated/0/' + match[1] + '/' + fileName;
-        console.log('[save] copying to:', dest);
-        await NativeFS.copy({ from: safeName, directory: 'CACHE', to: dest });
-        console.log('[save] copy OK to', dest);
+        console.log('[save] dest path:', dest);
+        const copyRes = await NativeFS.copy({ from: safeName, directory: 'CACHE', to: dest });
+        console.log('[save] copy result:', JSON.stringify(copyRes));
         return true;
+      } else {
+        console.warn('[save] could not extract path from URI — blob download fallback');
       }
-    } catch(e) { console.warn('[save] copy failed:', String(e?.message||e), '— blob download fallback'); }
+    } catch(e) {
+      console.error('[save] copy FAILED:', String(e?.message||e), JSON.stringify(e));
+      console.log('[save] blob download fallback');
+    }
+  } else {
+    console.warn('[save] no cacheUri — blob download fallback');
   }
   return triggerBlobDownload(blob, fileName);
 }
 
 // Share via Android share sheet
 async function nativeShareFiles(doneFiles) {
+  console.log('=== [share] START ===');
+  console.log('[share] Filesystem:', !!_Cap.Filesystem, 'Share:', !!_Cap.Share);
+  console.log('[share] file count:', doneFiles.length);
+  doneFiles.forEach((f,i) => console.log('[share] file', i, ':', f.outName, 'blobSize:', f.blob?.size));
+
   const NativeFS = _Cap.Filesystem;
   const NativeSh = _Cap.Share;
-  console.log('[share] FS:', !!NativeFS, 'Share:', !!NativeSh, 'count:', doneFiles.length);
+
   if (!NativeSh) { console.error('[share] Share plugin missing'); return false; }
+
   if (!NativeFS) {
+    console.warn('[share] Filesystem missing — trying Web Share API');
     try {
       const sf = doneFiles.map(f => new File([f.blob], f.outName, { type: f.blob.type }));
+      console.log('[share] calling navigator.share with', sf.length, 'files');
       await navigator.share({ files: sf, title: 'AudioShift Pro' });
+      console.log('[share] navigator.share OK');
       return true;
-    } catch(e) { return false; }
+    } catch(e) {
+      console.error('[share] navigator.share failed:', String(e?.message||e));
+      return false;
+    }
   }
+
   try {
     const uris = [];
     for (const f of doneFiles) {
-      if (!f.blob?.size) continue;
+      if (!f.blob?.size) { console.warn('[share] empty blob:', f.outName); continue; }
       const safeName = f.outName.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const uri = await writeToCacheChunked(NativeFS, safeName, f.blob);
+      console.log('[share] caching file:', f.outName, '→', safeName);
+      let uri = null;
+      try {
+        uri = await writeToCacheChunked(NativeFS, safeName, f.blob);
+        console.log('[share] cached URI:', uri);
+      } catch(e) {
+        console.error('[share] cache failed for', f.outName, ':', String(e?.message||e));
+        continue;
+      }
       if (uri) uris.push(uri);
       else console.warn('[share] no URI for', f.outName);
     }
-    console.log('[share] URIs:', JSON.stringify(uris));
-    if (!uris.length) { console.error('[share] no URIs'); return false; }
-    await NativeSh.share({ title: 'AudioShift Pro', files: uris, dialogTitle: 'Share audio files' });
+
+    console.log('[share] total URIs:', uris.length, JSON.stringify(uris));
+    if (!uris.length) { console.error('[share] no URIs — aborting'); return false; }
+
+    console.log('[share] calling NativeSh.share...');
+    const shareRes = await NativeSh.share({
+      title: 'AudioShift Pro', files: uris, dialogTitle: 'Share audio files',
+    });
+    console.log('[share] share result:', JSON.stringify(shareRes));
     return true;
   } catch(e) {
     const msg = String(e?.message||e);
-    if (!msg.toLowerCase().includes('cancel')) console.error('[share] failed:', msg);
+    if (!msg.toLowerCase().includes('cancel')) console.error('[share] FAILED:', msg, JSON.stringify(e));
+    else console.log('[share] user cancelled');
     return false;
   }
 }
