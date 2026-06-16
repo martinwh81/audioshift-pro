@@ -3412,70 +3412,52 @@ async function writeBlobToCache(safeName, blob) {
 
 // Save file — use Share plugin which lets user save to Downloads
 async function nativeSaveFile(blob, fileName) {
-  console.log('=== [save] START ===', fileName, blob?.size, 'bytes');
-  console.log('[save] folderUri:', _nativeFolderUri);
-
+  console.log('[save]', fileName, blob?.size, 'bytes');
   const NativeFS = _Cap.Filesystem;
   const NativeSh = _Cap.Share;
-
-  if (!NativeFS) { console.warn('[save] Filesystem plugin missing'); return false; }
+  if (!NativeFS || !NativeSh) { console.error('[save] plugins missing'); return false; }
 
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
 
-  // If folder chosen — write directly to destination using chunked FileReader
-  if (_nativeFolderUri) {
-    try {
-      const decoded = decodeURIComponent(_nativeFolderUri);
-      console.log('[save] decoded folderUri:', decoded);
-      const match = decoded.match(/primary:(.+)/);
-      if (match) {
-        const folderPath = match[1];
-        const destPath   = '/storage/emulated/0/' + folderPath + '/' + fileName;
-        console.log('[save] writing directly to:', destPath);
-
-        // Write to destination using FileReader chunks + appendFile
-        const CHUNK = 32 * 1024;
-        const total = Math.ceil(blob.size / CHUNK);
-        for (let i = 0; i < total; i++) {
-          const chunk = blob.slice(i * CHUNK, Math.min((i + 1) * CHUNK, blob.size));
-          const b64 = await new Promise((res, rej) => {
-            const r = new FileReader();
-            r.onload  = () => res(r.result.split(',')[1]);
-            r.onerror = () => rej(r.error);
-            r.readAsDataURL(chunk);
-          });
-          if (i === 0) {
-            const res = await NativeFS.writeFile({ path: destPath, data: b64, recursive: true });
-            console.log('[save] dest chunk 0 OK:', JSON.stringify(res));
-          } else {
-            await NativeFS.appendFile({ path: destPath, data: b64 });
-            if (i % 100 === 0) console.log('[save] dest chunk', i, '/', total);
-          }
-        }
-        console.log('[save] direct write to folder COMPLETE:', destPath);
-        return true;
-      } else {
-        console.warn('[save] could not parse path from URI:', decoded);
-      }
-    } catch(e) {
-      console.error('[save] direct folder write FAILED:', String(e?.message||e));
-    }
-    // Folder write failed
-    return false;
-  }
-
-  // No folder chosen — write to cache then open share sheet
+  // Write to app DOCUMENTS folder (always works, no permissions needed)
+  const docPath = 'AudioShiftPro/' + safeName;
+  console.log('[save] writing to DOCUMENTS:', docPath);
   try {
-    const cacheUri = await writeBlobToCache(safeName, blob);
-    if (!cacheUri) { console.error('[save] no cache URI'); return false; }
-    console.log('[save] cached at:', cacheUri);
-    if (!NativeSh) return false;
-    console.log('[save] opening share sheet');
-    await NativeSh.share({ title: 'Save ' + fileName, files: [cacheUri], dialogTitle: 'Save audio file' });
+    const CHUNK = 32 * 1024;
+    const total = Math.ceil(blob.size / CHUNK);
+    for (let i = 0; i < total; i++) {
+      const chunk = blob.slice(i * CHUNK, Math.min((i + 1) * CHUNK, blob.size));
+      const b64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload  = () => res(r.result.split(',')[1]);
+        r.onerror = () => rej(r.error);
+        r.readAsDataURL(chunk);
+      });
+      if (i === 0) {
+        await NativeFS.writeFile({ path: docPath, data: b64, directory: 'DOCUMENTS', recursive: true });
+        console.log('[save] chunk 0 written');
+      } else {
+        await NativeFS.appendFile({ path: docPath, data: b64, directory: 'DOCUMENTS' });
+        if (i % 100 === 0) console.log('[save] chunk', i, '/', total);
+      }
+    }
+    console.log('[save] write complete');
+
+    // Get URI and open share sheet — user taps "Save to Downloads" / WhatsApp / Drive etc.
+    const uriRes = await NativeFS.getUri({ path: docPath, directory: 'DOCUMENTS' });
+    const uri = uriRes?.uri;
+    console.log('[save] URI:', uri);
+    if (!uri) { console.error('[save] no URI'); return false; }
+
+    await NativeSh.share({
+      title: fileName,
+      files: [uri],
+      dialogTitle: 'Save "' + fileName + '" — tap Save to Files or any app',
+    });
     return true;
   } catch(e) {
-    const msg = String(e?.message||e);
-    if (!msg.toLowerCase().includes('cancel')) console.error('[save] share FAILED:', msg);
+    const msg = String(e?.message || e);
+    if (!msg.toLowerCase().includes('cancel')) console.error('[save] FAILED:', msg);
     return false;
   }
 }
