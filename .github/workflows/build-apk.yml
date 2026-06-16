@@ -33,7 +33,6 @@ jobs:
 
       - name: Bundle capacitor-blob-writer into www
         run: |
-          # Copy the blob-writer plugin JS into www so it loads locally (no CDN needed)
           mkdir -p www/plugins
           cp node_modules/capacitor-blob-writer/dist/plugin.js www/plugins/blob-writer.js || echo "blob-writer copy failed"
           echo "www/plugins contents:"
@@ -67,14 +66,47 @@ jobs:
           cd android
           ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: AudioShift-Pro-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 30
-
       - name: APK info
         run: |
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
           [ -f "$APK" ] && echo "✅ $(du -sh $APK)" || { echo "❌ APK not found"; exit 1; }
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "AudioShift Pro — Build #${{ github.run_number }}"
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+          body: |
+            🎵 **AudioShift Pro — Latest Build**
+            
+            📦 Build: #${{ github.run_number }}
+            📅 Date: ${{ github.event.head_commit.timestamp }}
+            💬 Change: ${{ github.event.head_commit.message }}
+            
+            **Install:**
+            1. Download `app-debug.apk` below
+            2. Tap the file on your phone
+            3. Install
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Send APK to Telegram
+        if: success()
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          APK_SIZE=$(du -sh "$APK" | cut -f1)
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          BUILD_NUM="${{ github.run_number }}"
+          DATE=$(date '+%d %b %Y %H:%M UTC')
+          
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
+            -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -F document=@"$APK" \
+            -F caption="🎵 AudioShift Pro — Build #${BUILD_NUM}
+          📅 ${DATE}
+          📦 Size: ${APK_SIZE}
+          💬 ${COMMIT_MSG}
+          
+          Tap the file above to install." \
+            --max-time 120
