@@ -3073,9 +3073,17 @@ convertBtn.addEventListener('click', async () => {
     if (saveMode==='folder' && folderHandle) {
       setItemProgress(item.id, 98, 'Saving to folder…');
       try {
-        const result = await saveToFolder(folderHandle, item.outName, blob, conflictPolicy);
-        if (result.finalName !== item.outName) item.outName = result.finalName;
-      } catch(e) { /* fall through */ }
+        if (isNative) {
+          const ok = await nativeSaveFile(blob, item.outName);
+          if (!ok) {
+            console.warn('[finalize] folder save failed for', item.outName, '— use Share button');
+            setItemProgress(item.id, 98, '⚠ Folder save failed — tap Share ↓');
+          }
+        } else {
+          const result = await saveToFolder(folderHandle, item.outName, blob, conflictPolicy);
+          if (result.finalName !== item.outName) item.outName = result.finalName;
+        }
+      } catch(e) { setItemProgress(item.id, 98, '⚠ Save error — tap Share ↓'); }
     }
     item.status = 'done'; updateFileItem(item.id);
   }
@@ -3410,47 +3418,96 @@ async function nativeSaveFile(blob, fileName) {
   const NativeFS = _Cap.Filesystem;
   const NativeSh = _Cap.Share;
 
-  if (!NativeFS || !NativeSh) {
-    console.warn('[save] plugins missing — anchor download fallback');
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href=url; a.download=fileName;
-    document.body.appendChild(a); a.click();
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
-    return true;
-  }
+  if (!NativeFS) { console.warn('[save] Filesystem plugin missing'); return false; }
 
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
 
+  // Write to CACHE first
+  let cacheUri;
   try {
-    const uri = await writeBlobToCache(safeName, blob);
-    if (!uri) { console.error('[save] no URI returned'); return false; }
-
-    if (_nativeFolderUri) {
-      // Try copying to chosen folder
-      try {
-        const decoded = decodeURIComponent(_nativeFolderUri);
-        const match   = decoded.match(/primary:(.+)/);
-        if (match) {
-          const dest = '/storage/emulated/0/' + match[1] + '/' + fileName;
-          console.log('[save] copying to:', dest);
-          const copyRes = await NativeFS.copy({ from: safeName, directory: 'CACHE', to: dest });
-          console.log('[save] copy OK:', JSON.stringify(copyRes));
-          return true;
-        }
-      } catch(ce) {
-        console.warn('[save] copy failed:', String(ce?.message||ce), '— using share sheet');
-      }
-    }
-
-    // Open share sheet — user can tap "Save to Downloads" or any app
-    console.log('[save] opening share sheet with URI:', uri);
-    await NativeSh.share({ title: 'Save ' + fileName, files: [uri], dialogTitle: 'Save audio file' });
-    return true;
+    cacheUri = await writeBlobToCache(safeName, blob);
+    if (!cacheUri) { console.error('[save] no cache URI returned'); return false; }
+    console.log('[save] cached at:', cacheUri);
   } catch(e) {
-    const msg = String(e?.message||e);
-    if (!msg.toLowerCase().includes('cancel')) console.error('[save] FAILED:', msg);
+    console.error('[save] cache write FAILED:', String(e?.message||e));
     return false;
   }
+
+  // If folder chosen — try to copy there
+  if (_nativeFolderUri) {
+    try {
+      const decoded = decodeURIComponent(_nativeFolderUri);
+      console.log('[save] decoded folderUri:', decoded);
+      const match = decoded.match(/primary:(.+)/);
+      if (match) {
+        const folderPath = match[1]; // e.g. "Martin piano/Test/Output"
+        const destPath   = '/storage/emulated/0/' + folderPath + '/' + fileName;
+        console.log('[save] dest path:', destPath);
+
+        // Try method 1: copy using path+directory (most reliable)
+        try {
+          const copyRes = await NativeFS.copy({
+            from:      safeName,
+            directory: 'CACHE',
+            to:        destPath,
+          });
+          console.log('[save] copy method 1 OK:', JSON.stringify(copyRes));
+          return true;
+        } catch(e1) {
+          console.warn('[save] copy method 1 failed:', String(e1?.message||e1));
+        }
+
+        // Try method 2: writeFile directly to absolute path
+        try {
+          const chunk = blob.slice(0, blob.size);
+          const b64 = await new Promise((res, rej) => {
+            const r = new FileReader();
+            r.onload = () => res(r.result.split(',')[1]);
+            r.onerror = () => rej(r.error);
+            r.readAsDataURL(chunk);
+          });
+          // Write whole file if small enough, else report error
+          if (blob.size <= 512 * 1024) {
+            await NativeFS.writeFile({ path: destPath, data: b64, recursive: true });
+            console.log('[save] direct write OK');
+            return true;
+          } else {
+            console.warn('[save] file too large for direct write, trying chunked...');
+            const destSafe = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const cacheUri2 = await writeBlobToCache(destSafe + '_dest', blob);
+            if (cacheUri2) {
+              const copyRes2 = await NativeFS.copy({ from: cacheUri2, to: destPath });
+              console.log('[save] copy from cache2 OK:', JSON.stringify(copyRes2));
+              return true;
+            }
+          }
+        } catch(e2) {
+          console.error('[save] copy method 2 failed:', String(e2?.message||e2));
+        }
+      } else {
+        console.warn('[save] could not parse path from URI:', decoded);
+      }
+    } catch(e) {
+      console.error('[save] folder save error:', String(e?.message||e));
+    }
+
+    // Folder save failed — show error, do NOT auto-open share
+    console.error('[save] all folder save methods failed — file is in app cache only');
+    return false;
+  }
+
+  // No folder chosen — open share sheet so user can save where they want
+  if (NativeSh) {
+    console.log('[save] no folder — opening share sheet');
+    try {
+      await NativeSh.share({ title: 'Save ' + fileName, files: [cacheUri], dialogTitle: 'Save audio file' });
+      return true;
+    } catch(e) {
+      const msg = String(e?.message||e);
+      if (!msg.toLowerCase().includes('cancel')) console.error('[save] share failed:', msg);
+    }
+  }
+  return false;
 }
 
 // Share via Android share sheet
