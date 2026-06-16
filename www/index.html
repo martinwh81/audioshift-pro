@@ -929,6 +929,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 
     <!-- Write to File — output mode selection -->
     <div style="font-size:9px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.08em;color:var(--tx3);margin-bottom:6px;">Write to File — Save Mode</div>
+
+    <!-- Browser: original 3-mode toggle -->
     <div class="save-mode-row" id="metaSaveModeRow">
       <button class="save-mode-btn active" id="metaModeIndividual">⬇ Individual</button>
       <button class="save-mode-btn" id="metaModeFolder">📁 Folder</button>
@@ -940,7 +942,20 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
         <span class="folder-path" id="metaFolderPath">No folder selected</span>
       </div>
     </div>
-    <button class="btn-save-meta" id="writeMetaBtn" style="width:100%;background:var(--green);">💾 Write to File</button>
+
+    <!-- APK: unified save modes (same as Convert page) -->
+    <div id="metaNativeSaveModes" style="display:none">
+      <div class="save-mode-row">
+        <button class="save-mode-btn active" id="metaNativeModeSave">💾 Save</button>
+        <button class="save-mode-btn" id="metaNativeModeShare">📤 Share</button>
+        <button class="save-mode-btn" id="metaNativeModeZip">🗜 Share ZIP</button>
+      </div>
+      <div style="font-size:10px;color:var(--tx3);margin-top:4px;line-height:1.5;" id="metaNativeSaveHint">
+        💾 Saves to <strong>Documents/AudioShiftPro/</strong> on this device
+      </div>
+    </div>
+
+    <button class="btn-save-meta" id="writeMetaBtn" style="width:100%;background:var(--green);margin-top:8px;">💾 Write to File</button>
     <div style="font-size:10px;color:var(--tx3);margin-top:5px;">🌐 fields → all files · 👤 fields → selected file only · no re-encoding</div>
   </div>
 
@@ -957,8 +972,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 <!-- ── File conflict modal ── -->
 <div id="conflictModal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(44,36,24,.55);display:none;align-items:center;justify-content:center;padding:20px;">
   <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:20px;max-width:360px;width:100%;box-shadow:var(--shadow2);">
-    <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:6px;">File already exists</div>
-    <div id="conflictFileName" style="font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--accent);word-break:break-all;margin-bottom:14px;"></div>
+    <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:4px;">⚠ File already exists</div>
+    <div id="conflictFileName" style="font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--accent);word-break:break-all;margin-bottom:4px;"></div>
+    <div id="conflictFolderHint" style="font-size:10px;color:var(--tx3);margin-bottom:12px;">in Documents/AudioShiftPro/</div>
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
       <button class="conflict-btn" data-action="overwrite" style="padding:10px;border-radius:var(--r2);border:1px solid var(--border);background:var(--s2);color:var(--tx);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;text-align:left;">
         🔄 Overwrite <span style="font-weight:400;color:var(--tx3);">— replace existing file</span>
@@ -1297,6 +1313,42 @@ function setupNativeSaveModes() {
   });
 }
 setupNativeSaveModes();
+
+// Also set up meta page native modes
+function setupMetaNativeSaveModes() {
+  if (!isNative) return;
+  const metaNative  = document.getElementById('metaNativeSaveModes');
+  const metaBrowser = document.getElementById('metaSaveModeRow');
+  const metaFRow    = document.getElementById('metaFolderRow');
+  if (!metaNative || !metaBrowser) { setTimeout(setupMetaNativeSaveModes, 200); return; }
+  metaNative.style.display  = '';
+  metaBrowser.style.display = 'none';
+  if (metaFRow) metaFRow.style.display = 'none';
+
+  const btnSave  = document.getElementById('metaNativeModeSave');
+  const btnShare = document.getElementById('metaNativeModeShare');
+  const btnZip   = document.getElementById('metaNativeModeZip');
+  const hint     = document.getElementById('metaNativeSaveHint');
+  const hints = {
+    save:  '💾 Saves to <strong>Documents/AudioShiftPro/</strong> on this device',
+    share: '📤 Opens share sheet — send to WhatsApp, Drive, email…',
+    zip:   '🗜 Zips all files and opens share sheet',
+  };
+  let metaNativeSaveMode = 'save';
+  [btnSave, btnShare, btnZip].forEach(btn => {
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      [btnSave, btnShare, btnZip].forEach(b => b?.classList.remove('active'));
+      btn.classList.add('active');
+      metaNativeSaveMode = btn === btnSave ? 'save' : btn === btnShare ? 'share' : 'zip';
+      if (hint) hint.innerHTML = hints[metaNativeSaveMode];
+      // Expose to writeMetaBtn handler
+      window._metaNativeSaveMode = metaNativeSaveMode;
+    });
+  });
+  window._metaNativeSaveMode = 'save'; // default
+}
+setupMetaNativeSaveModes();
 // ── Shared folder handle setter — updates both Convert and Metadata picker labels ──
 function setFolderHandle(handle) {
   folderHandle = handle;
@@ -2733,12 +2785,49 @@ writeMetaBtn.addEventListener('click', async () => {
     updateFileItem(f.id);
   });
 
-  const toWrite = metaSaveMode === 'individual' ? [selItem] : files;
+  const _mMode  = isNative ? (window._metaNativeSaveMode || 'save') : metaSaveMode;
+  const toWrite = _mMode === 'individual' ? [selItem] : files;
   writeMetaBtn.disabled = true;
   writeMetaBtn.textContent = '\u23f3 Writing\u2026';
 
   try {
-    if (metaSaveMode === 'zip') {
+    // APK — use unified native save pipeline
+    if (isNative) {
+      const blobs = [];
+      for (const item of toWrite) {
+        const r = await embedMetaToBlob(item);
+        if (r.blob) blobs.push({ blob: r.blob, outName: r.name });
+      }
+      if (!blobs.length) { writeMetaBtn.textContent = '⚠ Nothing to save'; return; }
+
+      if (_mMode === 'save') {
+        await nativeSaveAll(blobs);
+        writeMetaBtn.textContent = '✅ Saved';
+      } else if (_mMode === 'share') {
+        await nativeShareFiles(blobs);
+        writeMetaBtn.textContent = '✅ Shared';
+      } else {
+        // zip
+        if (typeof JSZip !== 'undefined') {
+          writeMetaBtn.textContent = '⏳ Zipping…';
+          const zip = new JSZip();
+          blobs.forEach(f => zip.file(f.outName, f.blob));
+          const zb = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+          const zipBlob = new Blob([zb], { type: 'application/zip' });
+          const NativeFS = _Cap.Filesystem;
+          const NativeSh = _Cap.Share;
+          if (NativeFS && NativeSh) {
+            const cacheUri = await writeBlobToCache('tagged-files.zip', zipBlob);
+            if (cacheUri) await NativeSh.share({ title: 'Tagged audio files', files: [cacheUri], dialogTitle: 'Share ZIP' });
+          }
+          writeMetaBtn.textContent = '✅ ZIP shared';
+        }
+      }
+      setTimeout(() => { writeMetaBtn.disabled = false; writeMetaBtn.textContent = '💾 Write to File'; }, 2000);
+      return;
+    }
+
+    if (_mMode === 'zip') {
       const zip = new JSZip();
       for (const item of toWrite) {
         const r = await embedMetaToBlob(item);
@@ -2749,7 +2838,7 @@ writeMetaBtn.addEventListener('click', async () => {
       a.href = URL.createObjectURL(zb); a.download = 'tagged-files.zip'; a.click();
       writeMetaBtn.textContent = '\u2713 Downloaded ZIP (' + toWrite.length + ' files)';
 
-    } else if (metaSaveMode === 'folder') {
+    } else if (_mMode === 'folder') {
       if (!folderHandle) {
         alert('Please choose a folder first.');
         writeMetaBtn.disabled = false; writeMetaBtn.textContent = '\ud83d\udcbe Write to File'; return;
@@ -2993,6 +3082,7 @@ convertBtn.addEventListener('click', async () => {
   }
   if (!files.length) return;
   isConverting = true; cancelRequested = false; stopPlay();
+  _nativeConflictPolicy = null; // reset duplicate handling each run
   // Reset ALL files to pending — Convert Again re-converts everything
   // (decodedBuf is kept so decode step is skipped)
   files.forEach(f => {
@@ -3143,11 +3233,13 @@ convertBtn.addEventListener('click', async () => {
     if (isNative) {
       // APK: auto-save based on nativeSaveMode
       if (nativeSaveMode === 'save') {
-        setItemProgress(item.id, 98, 'Saving to Documents…');
-        const ok = await nativeSaveFile(blob, item.outName);
-        if (!ok) setItemProgress(item.id, 98, '⚠ Save failed — tap 💾 Save or 📤 Share');
+        setItemProgress(item.id, 98, 'Saving…');
+        const result = await nativeSaveFile(blob, item.outName);
+        if (result === true) setItemProgress(item.id, 99, '✅ Saved');
+        else if (result === 'skipped') setItemProgress(item.id, 99, '⏭ Skipped');
+        else setItemProgress(item.id, 99, '⚠ Save failed — tap 💾 Save');
       }
-      // share/zip modes: user taps button after conversion — nothing auto here
+      // share/zip modes: user taps button after conversion
     } else if (saveMode==='folder' && folderHandle) {
       setItemProgress(item.id, 98, 'Saving to folder…');
       try {
@@ -3497,56 +3589,127 @@ async function writeBlobToCache(safeName, blob) {
 }
 
 // Save file — use Share plugin which lets user save to Downloads
+// Toast notification
+function showToast(msg, duration=3000) {
+  let toast = document.getElementById('_nativeToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = '_nativeToast';
+    toast.style.cssText = 'position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:rgba(44,36,24,.92);color:#fff;padding:10px 18px;border-radius:20px;font-size:12px;font-family:Inter,sans-serif;z-index:9999;pointer-events:none;text-align:center;max-width:80vw;line-height:1.5;opacity:0;transition:opacity .2s;';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.style.opacity = '1';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { toast.style.opacity = '0'; }, duration);
+}
+
+// Native duplicate conflict check and resolution
+// Uses the existing conflict modal, extended with folder path hint
+let _nativeConflictPolicy = null; // reset each conversion run
+
+async function nativeCheckAndSave(NativeFS, docPath, directory, blob, fileName) {
+  // Check if file exists
+  let exists = false;
+  try {
+    await NativeFS.stat({ path: docPath, directory });
+    exists = true;
+  } catch(e) { exists = false; }
+
+  let finalPath = docPath;
+  let finalName = fileName;
+
+  if (exists) {
+    let action = _nativeConflictPolicy;
+    if (!action) {
+      // Show conflict modal and wait
+      const result = await showConflictModal(fileName);
+      action = result.action;
+      if (result.remember) _nativeConflictPolicy = action;
+    }
+    if (action === 'skip') return { saved: false, finalName: fileName };
+    if (action === 'rename') {
+      // Find free name: base (1).ext, base (2).ext ...
+      const dot  = fileName.lastIndexOf('.');
+      const base = dot >= 0 ? fileName.slice(0, dot) : fileName;
+      const ext  = dot >= 0 ? fileName.slice(dot) : '';
+      let n = 1;
+      while (true) {
+        const candidate = base + ' (' + n + ')' + ext;
+        const safeCand  = candidate.replace(/[^a-zA-Z0-9._() -]/g, '_');
+        const candPath  = docPath.replace(fileName.replace(/[^a-zA-Z0-9._() -]/g, '_'), safeCand);
+        // Actually rebuild path
+        const parts = docPath.split('/');
+        parts[parts.length - 1] = safeCand;
+        const newPath = parts.join('/');
+        try { await NativeFS.stat({ path: newPath, directory }); n++; }
+        catch(e) { finalPath = newPath; finalName = candidate; break; }
+      }
+    }
+    // overwrite: keep finalPath as-is
+  }
+
+  // Write using FileReader chunks
+  const CHUNK = 32 * 1024;
+  const total = Math.ceil(blob.size / CHUNK);
+  for (let i = 0; i < total; i++) {
+    const chunk = blob.slice(i * CHUNK, Math.min((i + 1) * CHUNK, blob.size));
+    const b64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload  = () => res(r.result.split(',')[1]);
+      r.onerror = () => rej(r.error);
+      r.readAsDataURL(chunk);
+    });
+    if (i === 0) {
+      await NativeFS.writeFile({ path: finalPath, data: b64, directory, recursive: true });
+    } else {
+      await NativeFS.appendFile({ path: finalPath, data: b64, directory });
+    }
+  }
+  return { saved: true, finalName };
+}
+
 async function nativeSaveFile(blob, fileName) {
   console.log('[save]', fileName, blob?.size, 'bytes');
   const NativeFS = _Cap.Filesystem;
   const NativeSh = _Cap.Share;
-  if (!NativeFS || !NativeSh) { console.error('[save] plugins missing'); return false; }
+  if (!NativeFS) { console.error('[save] Filesystem plugin missing'); return false; }
 
-  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const safeName = fileName.replace(/[^a-zA-Z0-9._() -]/g, '_');
+  const docPath  = 'AudioShiftPro/' + safeName;
 
-  // Write to app DOCUMENTS folder (always works, no permissions needed)
-  const docPath = 'AudioShiftPro/' + safeName;
-  console.log('[save] writing to DOCUMENTS:', docPath);
   try {
-    const CHUNK = 32 * 1024;
-    const total = Math.ceil(blob.size / CHUNK);
-    for (let i = 0; i < total; i++) {
-      const chunk = blob.slice(i * CHUNK, Math.min((i + 1) * CHUNK, blob.size));
-      const b64 = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload  = () => res(r.result.split(',')[1]);
-        r.onerror = () => rej(r.error);
-        r.readAsDataURL(chunk);
-      });
-      if (i === 0) {
-        await NativeFS.writeFile({ path: docPath, data: b64, directory: 'DOCUMENTS', recursive: true });
-        console.log('[save] chunk 0 written');
-      } else {
-        await NativeFS.appendFile({ path: docPath, data: b64, directory: 'DOCUMENTS' });
-        if (i % 100 === 0) console.log('[save] chunk', i, '/', total);
-      }
+    const result = await nativeCheckAndSave(NativeFS, docPath, 'DOCUMENTS', blob, fileName);
+    if (!result.saved) {
+      console.log('[save] skipped:', fileName);
+      return 'skipped';
     }
-    console.log('[save] write complete');
-
-    // Get URI and open share sheet — user taps "Save to Downloads" / WhatsApp / Drive etc.
-    const uriRes = await NativeFS.getUri({ path: docPath, directory: 'DOCUMENTS' });
-    const uri = uriRes?.uri;
-    console.log('[save] URI:', uri);
-    if (!uri) { console.error('[save] no URI'); return false; }
-
-    await NativeSh.share({
-      title: fileName,
-      files: [uri],
-      dialogTitle: 'Save "' + fileName + '" — tap Save to Files or any app',
-    });
+    console.log('[save] saved as:', result.finalName);
     return true;
   } catch(e) {
-    const msg = String(e?.message || e);
-    if (!msg.toLowerCase().includes('cancel')) console.error('[save] FAILED:', msg);
+    console.error('[save] FAILED:', String(e?.message||e));
     return false;
   }
 }
+
+// Save multiple files with summary toast
+async function nativeSaveAll(doneFiles) {
+  _nativeConflictPolicy = null; // reset per-run
+  let saved = 0, skipped = 0, failed = 0;
+  for (const f of doneFiles) {
+    const result = await nativeSaveFile(f.blob, f.outName);
+    if (result === true) saved++;
+    else if (result === 'skipped') skipped++;
+    else failed++;
+  }
+  const parts = [];
+  if (saved)   parts.push('✅ ' + saved + ' saved');
+  if (skipped) parts.push('⏭ ' + skipped + ' skipped');
+  if (failed)  parts.push('✗ ' + failed + ' failed');
+  showToast(parts.join('  ') + '\nDocuments/AudioShiftPro/', 4000);
+  return saved > 0;
+}
+
 
 // Share via Android share sheet
 async function nativeShareFiles(doneFiles) {
@@ -5635,16 +5798,9 @@ if (saveAllBtn) {
     const done = files.filter(f => f.status === 'done' && f.blob);
     if (!done.length) return;
     saveAllBtn.textContent = '⏳ Saving…'; saveAllBtn.disabled = true;
-    let saved = 0;
-    for (const f of done) {
-      const ok = await nativeSaveFile(f.blob, f.outName);
-      if (ok) saved++;
-    }
-    saveAllBtn.textContent = saved === done.length
-      ? `✅ Saved ${saved} file${saved>1?'s':''}`
-      : `⚠ ${saved}/${done.length} saved`;
+    await nativeSaveAll(done);
     saveAllBtn.disabled = false;
-    setTimeout(() => refreshUI(), 3000);
+    refreshUI();
   });
 }
 
