@@ -567,7 +567,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
   <!-- Save settings -->
   <div class="card">
     <div class="card-title">Save Settings</div>
-    <div class="save-mode-row">
+
+    <!-- Browser version: original 3-mode toggle -->
+    <div class="save-mode-row" id="browserSaveModes">
       <button class="save-mode-btn active" id="modeIndividual">⬇ Individual</button>
       <button class="save-mode-btn" id="modeFolder">📁 Folder</button>
       <button class="save-mode-btn" id="modeZip">🗜 ZIP</button>
@@ -578,6 +580,19 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
         <span class="folder-path" id="folderPath">No folder selected</span>
       </div>
     </div>
+
+    <!-- APK version: simplified 3 clear buttons (hidden until isNative detected) -->
+    <div id="nativeSaveModes" style="display:none">
+      <div class="save-mode-row">
+        <button class="save-mode-btn active" id="nativeModeSave">💾 Save</button>
+        <button class="save-mode-btn" id="nativeModeShare">📤 Share</button>
+        <button class="save-mode-btn" id="nativeModeZip">🗜 Share ZIP</button>
+      </div>
+      <div style="font-size:10px;color:var(--tx3);margin-top:4px;line-height:1.5;" id="nativeSaveHint">
+        💾 Saves to <strong>Documents/AudioShiftPro/</strong> on this device
+      </div>
+    </div>
+
     <input class="text-input" id="savePrefix" type="text" placeholder="Filename prefix (optional)" style="margin-bottom:4px;">
     <div class="save-hint">Output: [prefix][original].[ext]</div>
   </div>
@@ -934,6 +949,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 <!-- ── Action buttons (sticky bottom) ── -->
 <div class="action-row">
   <button class="btn-convert" id="convertBtn" disabled>Convert All</button>
+  <button class="btn-share-inline" id="saveAllBtn" style="display:none;">💾 Save</button>
   <button class="btn-share-inline" id="shareAllBtn">📤 Share</button>
   <button class="btn-zip" id="zipBtn">⬇ ZIP</button>
 </div>
@@ -1004,6 +1020,7 @@ let cancelRequested = false; // set true to stop after current file finishes
 let selectedFmt  = 'mp3';
 let nudgeStep    = 0.1;
 let saveMode     = 'individual';
+let nativeSaveMode = 'save'; // 'save' | 'share' | 'zip' — APK only
 let folderHandle = null;
 let normMode     = 'peak';
 let zoomLevel    = 1;
@@ -1147,6 +1164,7 @@ const bpmFileList        = document.getElementById('bpmFileList');
 const detectBpmAllBtn    = document.getElementById('detectBpmAllBtn');
 const bpmWaveBadge       = document.getElementById('bpmWaveBadge');
 const shareAllBtn        = document.getElementById('shareAllBtn');
+const saveAllBtn         = document.getElementById('saveAllBtn');
 
 // ════════════════════════════════════════════════════
 //  TAB NAVIGATION
@@ -1234,6 +1252,36 @@ function getPitch() { return pitchEnabled.checked ? parseInt(pitchRange.value) :
     refreshUI();
   });
 });
+
+// ── Native save mode (APK only) ──
+if (isNative) {
+  // Show native UI, hide browser UI
+  document.getElementById('nativeSaveModes').style.display = '';
+  document.getElementById('browserSaveModes').style.display = 'none';
+  folderPickerRow.style.display = 'none';
+
+  const nativeModeSave  = document.getElementById('nativeModeSave');
+  const nativeModeShare = document.getElementById('nativeModeShare');
+  const nativeModeZip   = document.getElementById('nativeModeZip');
+  const nativeSaveHint  = document.getElementById('nativeSaveHint');
+
+  [nativeModeSave, nativeModeShare, nativeModeZip].forEach(btn => {
+    btn.addEventListener('click', () => {
+      [nativeModeSave, nativeModeShare, nativeModeZip].forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (btn === nativeModeSave) {
+        nativeSaveMode = 'save';
+        nativeSaveHint.innerHTML = '💾 Saves to <strong>Documents/AudioShiftPro/</strong> on this device';
+      } else if (btn === nativeModeShare) {
+        nativeSaveMode = 'share';
+        nativeSaveHint.innerHTML = '📤 Opens share sheet after conversion — send to WhatsApp, Drive, email…';
+      } else {
+        nativeSaveMode = 'zip';
+        nativeSaveHint.innerHTML = '🗜 Zips all files and opens share sheet — send or save the ZIP';
+      }
+    });
+  });
+}
 // ── Shared folder handle setter — updates both Convert and Metadata picker labels ──
 function setFolderHandle(handle) {
   folderHandle = handle;
@@ -1446,8 +1494,15 @@ function refreshUI() {
   // Show inline share button with done file count
   const _doneCount = files.filter(f => f.status === 'done' && f.blob).length;
   if (shareAllBtn) {
-    shareAllBtn.classList.toggle('show', _doneCount > 0);
-    shareAllBtn.textContent = _doneCount > 0 ? `📤 Share (${_doneCount})` : '📤 Share';
+    const showShare = _doneCount > 0 && (!isNative || nativeSaveMode === 'share' || nativeSaveMode === 'zip');
+    shareAllBtn.classList.toggle('show', showShare);
+    shareAllBtn.textContent = isNative && nativeSaveMode === 'zip'
+      ? `🗜 Share ZIP (${_doneCount})` : `📤 Share (${_doneCount})`;
+  }
+  if (saveAllBtn) {
+    const showSave = _doneCount > 0 && isNative && nativeSaveMode === 'save';
+    saveAllBtn.style.display = showSave ? '' : 'none';
+    saveAllBtn.textContent = `💾 Save (${_doneCount})`;
   }
   // Refresh preview selector — defer slightly so file list is fully updated
   setTimeout(() => { if (typeof refreshPreviewSel === 'function') refreshPreviewSel(); }, 50);
@@ -3070,7 +3125,15 @@ convertBtn.addEventListener('click', async () => {
     item.outName = prefix + item.file.name.replace(/\.[^.]+$/,'') + '.' + ext;
     item.blob    = blob;
 
-    if (saveMode==='folder' && folderHandle) {
+    if (isNative) {
+      // APK: auto-save based on nativeSaveMode
+      if (nativeSaveMode === 'save') {
+        setItemProgress(item.id, 98, 'Saving to Documents…');
+        const ok = await nativeSaveFile(blob, item.outName);
+        if (!ok) setItemProgress(item.id, 98, '⚠ Save failed — tap 💾 Save or 📤 Share');
+      }
+      // share/zip modes: user taps button after conversion — nothing auto here
+    } else if (saveMode==='folder' && folderHandle) {
       setItemProgress(item.id, 98, 'Saving to folder…');
       try {
         if (isNative) {
@@ -3171,27 +3234,36 @@ zipBtn.addEventListener('click', async () => {
   if (!doneFiles.length) return;
   zipBtn.textContent = '⏳ Zipping…'; zipBtn.disabled = true;
   try {
-    if (isNative) {
-      // On APK — save each file individually (no ZIP needed, files go to Documents)
-      let saved = 0;
-      for (const f of doneFiles) {
-        const ok = await nativeSaveFile(f.blob, f.outName);
-        if (ok) saved++;
-      }
-      zipBtn.textContent = saved > 0 ? `✅ Saved ${saved} file${saved>1?'s':''}` : '✗ Save failed';
-      setTimeout(() => { zipBtn.textContent = '⬇ ZIP'; zipBtn.disabled = false; }, 2500);
-      return;
-    }
-    // Browser — create ZIP and download
+    if (typeof JSZip === 'undefined') { alert('ZIP library not loaded.'); return; }
     const zip = new JSZip();
-    doneFiles.forEach(f => zip.file(f.outName, f.blob));
-    const zb = await zip.generateAsync({ type: 'blob' });
-    const a  = document.createElement('a');
-    a.href = URL.createObjectURL(zb); a.download = 'audioshift-batch.zip'; a.click();
+    doneFiles.forEach(f => { console.log('[zip] adding:', f.outName, f.blob.size); zip.file(f.outName, f.blob); });
+    const zb = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    const zipBlob = new Blob([zb], { type: 'application/zip' });
+    console.log('[zip] ZIP size:', zipBlob.size, 'files:', doneFiles.length);
+    if (isNative) {
+      // Share ZIP via share sheet
+      const NativeFS = _Cap.Filesystem;
+      const NativeSh = _Cap.Share;
+      if (NativeFS && NativeSh) {
+        const cacheUri = await writeBlobToCache('audioshift-batch.zip', zipBlob);
+        if (cacheUri) {
+          await NativeSh.share({ title: 'AudioShift Pro', files: [cacheUri], dialogTitle: 'Share ZIP' });
+          return;
+        }
+      }
+      alert('ZIP share failed.');
+    } else {
+      // Browser download
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(zipBlob);
+      a.download = 'audioshift-batch.zip';
+      a.click();
+    }
   } catch(e) {
     console.error('[ZIP]', e);
+    alert('ZIP failed: ' + (e?.message || e));
   } finally {
-    if (!isNative) { zipBtn.textContent = '⬇ ZIP'; zipBtn.disabled = false; }
+    zipBtn.textContent = '⬇ ZIP'; zipBtn.disabled = false;
   }
 });
 
@@ -5543,50 +5615,75 @@ function detectBpm(buf) {
 
 shareAllBtn.addEventListener('click', () => shareFiles());
 
+// Save button (APK only) — saves all done files to Documents/AudioShiftPro/
+if (saveAllBtn) {
+  saveAllBtn.addEventListener('click', async () => {
+    const done = files.filter(f => f.status === 'done' && f.blob);
+    if (!done.length) return;
+    saveAllBtn.textContent = '⏳ Saving…'; saveAllBtn.disabled = true;
+    let saved = 0;
+    for (const f of done) {
+      const ok = await nativeSaveFile(f.blob, f.outName);
+      if (ok) saved++;
+    }
+    saveAllBtn.textContent = saved === done.length
+      ? `✅ Saved ${saved} file${saved>1?'s':''}`
+      : `⚠ ${saved}/${done.length} saved`;
+    saveAllBtn.disabled = false;
+    setTimeout(() => refreshUI(), 3000);
+  });
+}
+
 async function shareFiles() {
   const done = files.filter(f => f.status === 'done' && f.blob);
   if (!done.length) return;
-
   const btn = shareAllBtn;
   const origText = btn?.textContent || '📤 Share';
   if (btn) { btn.textContent = '⏳ Preparing…'; btn.disabled = true; }
-
-  // ── Native APK share ──
-  if (isNative) {
-    const ok = await nativeShareFiles(done);
-    if (btn) { btn.textContent = origText; btn.disabled = false; }
-    if (!ok) {
-      const pluginNames = Object.keys(_Cap).join(', ') || 'none';
-      console.log('[Share] Available plugins:', pluginNames);
-      alert('Share failed.\n\nPlugins: ' + pluginNames);
-    }
-    return;
-  }
-
-  // ── Browser share (Web Share API) ──
   try {
-    if (!navigator.share) {
-      alert('Share not supported in this browser.\nUse the ⬇ download buttons instead.');
+    // APK ZIP mode — create real ZIP then share
+    if (isNative && nativeSaveMode === 'zip') {
+      if (typeof JSZip === 'undefined') { alert('ZIP library not loaded. Check internet connection.'); return; }
+      if (btn) btn.textContent = '⏳ Zipping…';
+      const zip = new JSZip();
+      done.forEach(f => { console.log('[zip] adding:', f.outName, f.blob.size); zip.file(f.outName, f.blob); });
+      const zb = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+      const zipBlob = new Blob([zb], { type: 'application/zip' });
+      console.log('[zip] ZIP created, size:', zipBlob.size, 'files:', done.length);
+      const NativeFS = _Cap.Filesystem;
+      const NativeSh = _Cap.Share;
+      if (NativeFS && NativeSh) {
+        const cacheUri = await writeBlobToCache('audioshift-batch.zip', zipBlob);
+        console.log('[zip] cache URI:', cacheUri);
+        if (cacheUri) {
+          await NativeSh.share({ title: 'AudioShift Pro — Converted files', files: [cacheUri], dialogTitle: 'Share ZIP' });
+          return;
+        }
+      }
+      alert('ZIP share failed.');
       return;
     }
+    // APK individual share
+    if (isNative) {
+      const ok = await nativeShareFiles(done);
+      if (!ok) alert('Share failed. Try the Save option instead.');
+      return;
+    }
+    // Browser share
+    if (!navigator.share) { alert('Share not supported. Use the download buttons instead.'); return; }
     const shareableFiles = done.map(f => new File([f.blob], f.outName, { type: f.blob.type }));
     const payload = { files: shareableFiles, title: 'AudioShift converted files' };
     if (navigator.canShare?.(payload)) {
       await navigator.share(payload);
-    } else {
-      // Fallback: share as ZIP
-      if (typeof JSZip !== 'undefined') {
-        const zip = new JSZip();
-        done.forEach(f => zip.file(f.outName, f.blob));
-        const zb  = await zip.generateAsync({ type: 'blob' });
-        const zf  = new File([zb], 'audioshift-converted.zip', { type: 'application/zip' });
-        await navigator.share({ files: [zf], title: 'AudioShift converted files' });
-      } else {
-        await navigator.share({ title: 'AudioShift converted files', text: 'Files converted by AudioShift Pro' });
-      }
+    } else if (typeof JSZip !== 'undefined') {
+      const zip = new JSZip();
+      done.forEach(f => zip.file(f.outName, f.blob));
+      const zb = await zip.generateAsync({ type: 'blob' });
+      const zf = new File([zb], 'audioshift-converted.zip', { type: 'application/zip' });
+      await navigator.share({ files: [zf], title: 'AudioShift converted files' });
     }
   } catch(e) {
-    if (e.name !== 'AbortError') console.error('[Share]', e);
+    if (e.name !== 'AbortError') console.error('[shareFiles]', e);
   } finally {
     if (btn) { btn.textContent = origText; btn.disabled = false; }
   }
