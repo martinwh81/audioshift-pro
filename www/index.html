@@ -249,6 +249,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 .norm-target-input:focus{border-color:var(--blue);}
 .norm-unit{font-size:10px;color:var(--tx3);font-family:'JetBrains Mono',monospace;flex-shrink:0;}
 .norm-note{font-size:10px;color:var(--tx3);margin-bottom:7px;line-height:1.5;}
+.norm-batch-btn{font-size:10px;padding:3px 8px;border-radius:10px;border:1px solid var(--border);background:var(--s2);cursor:pointer;color:var(--tx3);transition:all .12s;}
+.norm-batch-btn.active{border-color:var(--blue);background:#EDF4FB;color:var(--blue);font-weight:600;}
 .btn-norm{width:100%;padding:10px;border-radius:var(--r2);border:none;background:var(--blue);color:#fff;font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;}
 
 /* Metadata */
@@ -522,7 +524,21 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
           <input class="norm-target-input" id="normTarget" value="-1.0">
           <span class="norm-unit">dBFS</span>
         </div>
-        <div class="norm-note">Each file is analysed and scaled independently at encode time.</div>
+        <!-- True peak + Spotify preset -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <input type="checkbox" id="truePeakEnabled" style="width:13px;height:13px;accent-color:var(--blue);cursor:pointer;flex-shrink:0;">
+          <label for="truePeakEnabled" style="font-size:10px;color:var(--tx3);cursor:pointer;">True peak detection (4× oversample)</label>
+          <button id="spotifyPresetBtn" style="margin-left:auto;font-size:9px;padding:2px 7px;border-radius:10px;border:1px solid #1DB954;background:transparent;color:#1DB954;cursor:pointer;font-weight:600;white-space:nowrap;">🎵 Spotify</button>
+        </div>
+        <!-- Uniform gain for batch -->
+        <div id="uniformGainRow" style="display:none;align-items:center;gap:8px;margin-bottom:6px;">
+          <span style="font-size:10px;color:var(--tx3);">Batch:</span>
+          <button class="norm-batch-btn active" id="normPerFile" style="font-size:10px;padding:3px 8px;border-radius:10px;border:1px solid var(--border);background:var(--s2);cursor:pointer;">📁 Per file</button>
+          <button class="norm-batch-btn" id="normUniform" style="font-size:10px;padding:3px 8px;border-radius:10px;border:1px solid var(--border);background:var(--s2);cursor:pointer;">🎵 Uniform gain</button>
+        </div>
+        <!-- Analysis results — shown after file add or on demand -->
+        <div id="normAnalysis" style="display:none;font-size:10px;font-family:'JetBrains Mono',monospace;background:var(--s2);border-radius:var(--r2);padding:7px 10px;margin-bottom:6px;line-height:1.8;border:1px solid var(--border);"></div>
+        <div class="norm-note" id="normNote">Each file is analysed and scaled independently at encode time.</div>
       </div>
     </div>
   </div>
@@ -1054,7 +1070,9 @@ let nudgeStep    = 0.1;
 let saveMode     = 'individual';
 let nativeSaveMode = 'save'; // 'save' | 'share' | 'zip' — APK only
 let folderHandle = null;
-let normMode     = 'peak';
+let normMode       = 'peak';
+let normUniformGain = false;  // uniform gain across batch
+let normTruePeak    = false;  // true peak (4x oversample) detection
 let zoomLevel    = 1;
 
 // Preview
@@ -1441,6 +1459,8 @@ function addFiles(list) {
         const ac  = new (window.AudioContext || window.webkitAudioContext)();
         const ab  = await item.file.arrayBuffer();
         item.decodedBuf = await new Promise((res, rej) => ac.decodeAudioData(ab, res, rej));
+        ac.close();
+        if (normEnabled?.checked) runNormAnalysis();
         ac.close();
         // Show duration on success
         const el = document.getElementById('finfo-' + id);
@@ -2480,13 +2500,61 @@ function setupMergeDrag() {
 normEnabled.addEventListener('change', () => {
   normControls.style.opacity    = normEnabled.checked ? '1' : '.4';
   normControls.style.pointerEvents = normEnabled.checked ? '' : 'none';
+  if (normEnabled.checked) runNormAnalysis();
 });
+
+// True peak checkbox
+const truePeakEnabled = document.getElementById('truePeakEnabled');
+if (truePeakEnabled) {
+  truePeakEnabled.addEventListener('change', () => {
+    normTruePeak = truePeakEnabled.checked;
+    runNormAnalysis();
+  });
+}
+
+// Spotify preset — Peak, -1.0 dBFS TP
+const spotifyPresetBtn = document.getElementById('spotifyPresetBtn');
+if (spotifyPresetBtn) {
+  spotifyPresetBtn.addEventListener('click', () => {
+    if (!normEnabled.checked) { normEnabled.checked = true; normEnabled.dispatchEvent(new Event('change')); }
+    // Set Peak mode
+    document.querySelectorAll('.norm-opt').forEach(o => o.classList.remove('active'));
+    document.querySelector('.norm-opt[data-norm="peak"]')?.classList.add('active');
+    normMode = 'peak';
+    // Set -1.0 dBFS
+    if (normTarget) normTarget.value = '-1.0';
+    // Enable true peak
+    if (truePeakEnabled) { truePeakEnabled.checked = true; normTruePeak = true; }
+    runNormAnalysis();
+  });
+}
+
+// Batch mode buttons
+const normPerFileBtn  = document.getElementById('normPerFile');
+const normUniformBtn  = document.getElementById('normUniform');
+[normPerFileBtn, normUniformBtn].forEach(btn => {
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    [normPerFileBtn, normUniformBtn].forEach(b => b?.classList.remove('active'));
+    btn.classList.add('active');
+    normUniformGain = btn === normUniformBtn;
+    runNormAnalysis();
+  });
+});
+
+// Re-analyse when target changes
+if (normTarget) normTarget.addEventListener('change', () => { if (normEnabled.checked) runNormAnalysis(); });
+
+// Trigger analysis when files are pre-decoded
+const _origUpdateFileItem = updateFileItem;
+
 
 document.querySelectorAll('.norm-opt').forEach(opt => {
   opt.addEventListener('click', () => {
     if (!normEnabled.checked) return;
     document.querySelectorAll('.norm-opt').forEach(o => o.classList.remove('active'));
     opt.classList.add('active'); normMode = opt.dataset.norm;
+    runNormAnalysis();
   });
 });
 
@@ -3172,6 +3240,7 @@ convertBtn.addEventListener('click', async () => {
       const ab = await item.file.arrayBuffer();
       buf = await ac.decodeAudioData(ab);
       ac.close(); item.decodedBuf = buf;
+      if (normEnabled?.checked) runNormAnalysis();
     }
     ts('Decode done (' + buf.duration.toFixed(1) + 's audio)');
 
@@ -3212,7 +3281,10 @@ convertBtn.addEventListener('click', async () => {
     buf = applyFadeIfNeeded(buf);
 
     // Normalize (main thread only for WebCodecs formats)
-    if (doNorm && !canUseWorker(fmt)) buf = normalizeBuf(buf, normModeVal, normTargetVal);
+    if (doNorm && !canUseWorker(fmt)) {
+      const _uGain = normUniformGain && window._normUniformGain != null ? window._normUniformGain : null;
+      buf = normalizeBuf(buf, normModeVal, normTargetVal, _uGain);
+    }
 
     return buf;
   }
@@ -3225,7 +3297,7 @@ convertBtn.addEventListener('click', async () => {
       setItemProgress(item.id, 18, 'Queued for encoding…');
       const result = await runInWorker({
         audioBuf: buf, itemId: item.id, fmt, bitrate: br,
-        semitones, doNorm, normMode: normModeVal, normTarget: normTargetVal,
+        semitones, doNorm, normMode: normModeVal, normTarget: normTargetVal, normUniform: normUniformGain, normUniformGainLin: (normUniformGain && window._normUniformGain != null ? window._normUniformGain : null),
       });
       const mime = fmt==='mp3'?'audio/mpeg':fmt==='flac'?'audio/flac':'audio/wav';
       blob = new Blob([result.outBytes], { type: mime });
@@ -3933,16 +4005,22 @@ function stftPitchShiftRaw(channels, sr, semitones, onProgress) {
 }
 
 // ── Normalize (Float32Array[]) ──
-function normalizeRaw(channels, mode, targetDB) {
-  const targetLin=Math.pow(10,targetDB/20), len=channels[0].length;
-  let level=0;
-  for(const ch of channels){
-    if(mode==='peak'){for(let i=0;i<len;i++){const v=Math.abs(ch[i]);if(v>level)level=v;}}
-    else{let rms=0;for(let i=0;i<len;i++)rms+=ch[i]*ch[i];level=Math.max(level,Math.sqrt(rms/len));}
+function normalizeRaw(channels, mode, targetDB, uniformGainLin) {
+  const len = channels[0].length;
+  let gain;
+  if (uniformGainLin != null) {
+    gain = uniformGainLin;
+  } else {
+    const targetLin = Math.pow(10, targetDB / 20);
+    let level = 0;
+    for (const ch of channels) {
+      if (mode === 'peak') { for(let i=0;i<len;i++){const v=Math.abs(ch[i]);if(v>level)level=v;} }
+      else { let rms=0; for(let i=0;i<len;i++) rms+=ch[i]*ch[i]; level=Math.max(level,Math.sqrt(rms/len)); }
+    }
+    if (level < 1e-6) return channels;
+    gain = targetLin / level;
   }
-  if(level<1e-6) return channels;
-  const gain=targetLin/level;
-  return channels.map(ch=>{const o=new Float32Array(len);for(let i=0;i<len;i++)o[i]=Math.max(-1,Math.min(1,ch[i]*gain));return o;});
+  return channels.map(ch => { const o=new Float32Array(len); for(let i=0;i<len;i++) o[i]=Math.max(-1,Math.min(1,ch[i]*gain)); return o; });
 }
 
 // ── MP3 encode (Float32Array[]) ──
@@ -4012,7 +4090,7 @@ function encodeFLACRaw(channels, sr, onProgress) {
 
 // ── Main message handler ──
 self.onmessage = function(e) {
-  const { taskId, itemId, channels, sr, fmt, bitrate, semitones, doNorm, normMode, normTarget } = e.data;
+  const { taskId, itemId, channels, sr, fmt, bitrate, semitones, doNorm, normMode, normTarget, normUniform, normUniformGainLin } = e.data;
 
   try {
     let ch = channels; // Float32Array[]
@@ -4028,7 +4106,7 @@ self.onmessage = function(e) {
     // 2. Normalize
     if(doNorm) {
       self.postMessage({ type:'progress', taskId, itemId, pct:51, label:'Normalizing\u2026' });
-      ch = normalizeRaw(ch, normMode, normTarget);
+      ch = normalizeRaw(ch, normMode, normTarget, normUniform ? normUniformGainLin : null);
     }
 
     // 3. Encode
@@ -4561,23 +4639,166 @@ function trimBuf(buf, s, e) {
   return out;
 }
 
-function normalizeBuf(buf, mode, targetDB) {
-  const numCh=buf.numberOfChannels, len=buf.length;
-  const targetLin = Math.pow(10, targetDB/20);
-  // Analyse
-  let level = 0;
-  for (let c=0;c<numCh;c++) {
-    const ch = buf.getChannelData(c);
-    if (mode==='peak') { for(let i=0;i<len;i++) { const v=Math.abs(ch[i]); if(v>level)level=v; } }
-    else { let rms=0; for(let i=0;i<len;i++) rms+=ch[i]*ch[i]; level=Math.max(level,Math.sqrt(rms/len)); }
+// True peak detection — upsample 4x to catch inter-sample peaks
+// Spotify requires true peak <= -1.0 dBFS
+async function detectTruePeak(buf) {
+  const oversample = 4;
+  const sr  = buf.sampleRate * oversample;
+  const len = buf.length * oversample;
+  const oac = new OfflineAudioContext(buf.numberOfChannels, len, sr);
+  const src = oac.createBufferSource();
+  src.buffer = buf;
+  src.connect(oac.destination);
+  src.start(0);
+  const upsampled = await oac.startRendering();
+  let peak = 0;
+  for (let c = 0; c < upsampled.numberOfChannels; c++) {
+    const ch = upsampled.getChannelData(c);
+    for (let i = 0; i < ch.length; i++) {
+      const v = Math.abs(ch[i]);
+      if (v > peak) peak = v;
+    }
   }
-  if (level < 1e-6) return buf;
-  const gain = targetLin / level;
-  // Apply gain — create new buffer
-  const out = new AudioBuffer({numberOfChannels:numCh, length:len, sampleRate:buf.sampleRate});
-  for(let c=0;c<numCh;c++) {
-    const src=buf.getChannelData(c), dst=out.getChannelData(c);
-    for(let i=0;i<len;i++) dst[i]=Math.max(-1,Math.min(1,src[i]*gain));
+  return peak; // linear
+}
+
+// Analyse a single AudioBuffer — returns peak, truePeak, rms, gainNeeded
+async function analyzeBuffer(buf, targetDB, useTruePeak) {
+  const numCh = buf.numberOfChannels;
+  const len   = buf.length;
+
+  // Sample peak
+  let samplePeak = 0;
+  let sumSq = 0, count = 0;
+  for (let c = 0; c < numCh; c++) {
+    const ch = buf.getChannelData(c);
+    for (let i = 0; i < len; i++) {
+      const v = Math.abs(ch[i]);
+      if (v > samplePeak) samplePeak = v;
+      sumSq += ch[i] * ch[i];
+      count++;
+    }
+  }
+  const rms = Math.sqrt(sumSq / count);
+
+  // True peak (4× oversample) — only if enabled
+  const truePeak = useTruePeak ? await detectTruePeak(buf) : samplePeak;
+
+  // Use true peak as reference when enabled
+  const reference    = useTruePeak ? truePeak : samplePeak;
+  const targetLin    = Math.pow(10, targetDB / 20);
+  const gain         = reference > 1e-6 ? targetLin / reference : 1;
+
+  const peakDb       = 20 * Math.log10(Math.max(samplePeak, 1e-10));
+  const truePeakDb   = 20 * Math.log10(Math.max(truePeak, 1e-10));
+  const rmsDb        = 20 * Math.log10(Math.max(rms, 1e-10));
+  const gainDb       = 20 * Math.log10(gain);
+  const afterPeakDb  = peakDb + gainDb;
+
+  return { samplePeak, truePeak, rms, peakDb, truePeakDb, rmsDb, gainDb, gain, afterPeakDb };
+}
+
+// Show analysis in the UI for all loaded files
+async function runNormAnalysis() {
+  const analysisEl = document.getElementById('normAnalysis');
+  const noteEl     = document.getElementById('normNote');
+  if (!analysisEl) return;
+
+  const decoded = files.filter(f => f.decodedBuf);
+  if (!decoded.length) { analysisEl.style.display = 'none'; return; }
+
+  const targetDB   = parseFloat(normTarget?.value) || -1.0;
+  const useTruePeak = document.getElementById('truePeakEnabled')?.checked || false;
+  const mode        = normMode;
+
+  analysisEl.style.display = '';
+  analysisEl.innerHTML = '<span style="color:var(--tx3)">⏳ Analysing...</span>';
+
+  try {
+    const results = [];
+    for (const f of decoded) {
+      const r = await analyzeBuffer(f.decodedBuf, targetDB, useTruePeak);
+      results.push({ name: f.file.name, ...r });
+    }
+
+    // Uniform gain — find minimum gain across all files
+    const uniformGain    = Math.min(...results.map(r => r.gain));
+    const uniformGainDb  = 20 * Math.log10(uniformGain);
+
+    // Update uniform gain row visibility
+    const uniformRow = document.getElementById('uniformGainRow');
+    if (uniformRow) uniformRow.style.display = results.length > 1 ? 'flex' : 'none';
+
+    // Build display
+    let html = '';
+    if (results.length === 1) {
+      const r = results[0];
+      const tpLine = useTruePeak ? `<br>True peak: <b>${r.truePeakDb.toFixed(1)} dBFS</b>` : '';
+      const safe   = r.afterPeakDb <= 0.1;
+      html = `Sample peak: ${r.peakDb.toFixed(1)} dBFS${tpLine}<br>` +
+             `RMS: ${r.rmsDb.toFixed(1)} dBFS<br>` +
+             `Gain to apply: <b style="color:var(--blue)">${r.gainDb >= 0 ? '+' : ''}${r.gainDb.toFixed(1)} dB</b><br>` +
+             `After: ${r.afterPeakDb.toFixed(1)} dBFS ` +
+             (safe ? '<span style="color:#2e7d32">✅ No clipping</span>' : '<span style="color:#c62828">⚠ May clip</span>');
+    } else {
+      html = results.map(r => {
+        const effectiveGain = normUniformGain ? uniformGainDb : r.gainDb;
+        const tpStr = useTruePeak ? ` · TP:${r.truePeakDb.toFixed(1)}` : '';
+        return `<span style="color:var(--tx2)">${r.name.slice(0,22)}</span>` +
+               `${tpStr} · Peak:${r.peakDb.toFixed(1)} dB · ` +
+               `<b style="color:var(--blue)">${effectiveGain >= 0 ? '+' : ''}${effectiveGain.toFixed(1)} dB</b>`;
+      }).join('<br>');
+      if (normUniformGain) {
+        html += `<br><span style="color:var(--tx3)">Uniform gain: ${uniformGainDb >= 0 ? '+' : ''}${uniformGainDb.toFixed(1)} dB (limited by loudest file)</span>`;
+      }
+    }
+
+    // Spotify note
+    if (useTruePeak && targetDB <= -1.0) {
+      html += '<br><span style="color:#1DB954">🎵 Spotify compliant (TP ≤ -1.0 dBFS)</span>';
+    }
+
+    analysisEl.innerHTML = html;
+
+    // Store uniform gain for use in convert
+    window._normUniformGainDb = uniformGainDb;
+    window._normUniformGain   = uniformGain;
+
+  } catch(e) {
+    analysisEl.innerHTML = '<span style="color:var(--tx3)">Analysis failed: ' + (e.message||e) + '</span>';
+    console.error('[normAnalysis]', e);
+  }
+}
+
+function normalizeBuf(buf, mode, targetDB, uniformGainLin) {
+  const numCh = buf.numberOfChannels, len = buf.length;
+  let gain;
+
+  if (uniformGainLin != null) {
+    // Uniform gain across batch — gain pre-calculated
+    gain = uniformGainLin;
+  } else {
+    const targetLin = Math.pow(10, targetDB / 20);
+    let level = 0;
+    for (let c = 0; c < numCh; c++) {
+      const ch = buf.getChannelData(c);
+      if (mode === 'peak') {
+        for (let i = 0; i < len; i++) { const v = Math.abs(ch[i]); if (v > level) level = v; }
+      } else {
+        let rms = 0;
+        for (let i = 0; i < len; i++) rms += ch[i] * ch[i];
+        level = Math.max(level, Math.sqrt(rms / len));
+      }
+    }
+    if (level < 1e-6) return buf;
+    gain = targetLin / level;
+  }
+
+  // Apply gain — clamp to [-1, 1]
+  const out = new AudioBuffer({ numberOfChannels: numCh, length: len, sampleRate: buf.sampleRate });
+  for (let c = 0; c < numCh; c++) {
+    const src = buf.getChannelData(c), dst = out.getChannelData(c);
+    for (let i = 0; i < len; i++) dst[i] = Math.max(-1, Math.min(1, src[i] * gain));
   }
   return out;
 }
