@@ -3584,16 +3584,15 @@ async function writeBlobToCache(safeName, blob) {
       throw e;
     }
   } else {
-    // Use FileReader to convert blob to base64 (avoids arrayBuffer threading issue)
-    console.log('[write] using FileReader chunked approach, blob size:', blob.size);
-    const CHUNK_SIZE = 32 * 1024; // 32KB chunks
+    // Use FileReader + Blob.slice (avoids arrayBuffer threading deadlock)
+    // 1MB chunks — safe for Capacitor bridge, much faster than 32KB
+    console.log('[write] FileReader chunked, blob size:', blob.size);
+    const CHUNK_SIZE  = 1024 * 1024; // 1MB
     const totalChunks = Math.ceil(blob.size / CHUNK_SIZE);
-    console.log('[write] total chunks:', totalChunks);
+    console.log('[write]', totalChunks, totalChunks === 1 ? 'chunk (single write)' : 'chunks');
 
     for (let i = 0; i < totalChunks; i++) {
-      const start = i * CHUNK_SIZE;
-      const end   = Math.min(start + CHUNK_SIZE, blob.size);
-      const chunk = blob.slice(start, end); // Blob.slice — no arrayBuffer needed
+      const chunk = blob.slice(i * CHUNK_SIZE, Math.min((i + 1) * CHUNK_SIZE, blob.size));
       const b64   = await blobToBase64ViaFileReader(chunk);
       if (!b64) throw new Error('FileReader returned empty result for chunk ' + i);
 
@@ -3602,10 +3601,10 @@ async function writeBlobToCache(safeName, blob) {
         console.log('[write] chunk 0 OK, uri:', res?.uri);
       } else {
         await NativeFS.appendFile({ path: safeName, data: b64, directory: 'CACHE' });
-        if (i === 1 || i % 50 === 0) console.log('[write] chunk', i, '/', totalChunks, 'OK');
+        if (i % 5 === 0 || i === totalChunks - 1) console.log('[write] chunk', i + 1, '/', totalChunks);
       }
     }
-    console.log('[write] all', totalChunks, 'chunks done:', safeName);
+    console.log('[write] done:', safeName);
   }
 
   const uriRes = await NativeFS.getUri({ path: safeName, directory: 'CACHE' });
@@ -3674,24 +3673,30 @@ async function nativeCheckAndSave(NativeFS, docPath, directory, blob, fileName) 
     // overwrite: keep finalPath as-is
   }
 
-  // Write using FileReader chunks
-  const CHUNK = 32 * 1024;
+  // Write using FileReader + appendFile
+  // Chunk size: 1MB raw = 1.33MB base64 — safe for Capacitor bridge
+  // Files under 2MB: single write (faster, no append overhead)
+  const CHUNK = 1024 * 1024; // 1MB chunks
   const total = Math.ceil(blob.size / CHUNK);
+  console.log('[write]', blob.size, 'bytes,', total, total === 1 ? 'chunk (single write)' : 'chunks');
+
   for (let i = 0; i < total; i++) {
-    const chunk = blob.slice(i * CHUNK, Math.min((i + 1) * CHUNK, blob.size));
+    const slice = blob.slice(i * CHUNK, Math.min((i + 1) * CHUNK, blob.size));
     const b64 = await new Promise((res, rej) => {
       const r = new FileReader();
       r.onload  = () => res(r.result.split(',')[1]);
       r.onerror = () => rej(r.error);
-      r.readAsDataURL(chunk);
+      r.readAsDataURL(slice);
     });
     if (i === 0) {
       await NativeFS.writeFile({ path: finalPath, data: b64, directory, recursive: true });
+      if (total > 1) console.log('[write] chunk 0 written, continuing...');
     } else {
       await NativeFS.appendFile({ path: finalPath, data: b64, directory });
+      if (i % 5 === 0 || i === total - 1) console.log('[write] chunk', i + 1, '/', total);
     }
   }
-  return { saved: true, finalName };
+  console.log('[write] complete:', finalName);
 }
 
 async function nativeSaveFile(blob, fileName) {
