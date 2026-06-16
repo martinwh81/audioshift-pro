@@ -31,6 +31,14 @@ jobs:
       - name: Install npm dependencies
         run: npm install --legacy-peer-deps
 
+      - name: Bundle capacitor-blob-writer into www
+        run: |
+          # Copy the blob-writer plugin JS into www so it loads locally (no CDN needed)
+          mkdir -p www/plugins
+          cp node_modules/capacitor-blob-writer/dist/plugin.js www/plugins/blob-writer.js || echo "blob-writer copy failed"
+          echo "www/plugins contents:"
+          ls -la www/plugins/ 2>/dev/null || echo "plugins dir empty"
+
       - name: Add Android platform
         run: npx cap add android
 
@@ -42,7 +50,7 @@ jobs:
 
       - name: Add Android permissions
         run: |
-          sed -i 's|</manifest>|    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />\n</manifest>|' android/app/src/main/AndroidManifest.xml
+          sed -i 's|</manifest>|    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />\n</manifest>|' android/app/src/main/AndroidManifest.xml
 
       - name: Register ForegroundService in AndroidManifest
         run: |
