@@ -980,6 +980,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 </div><!-- /app-shell -->
 
 <script>
+// ── isNative must be declared first — used throughout ──
+const isNative = !!(window.Capacitor?.isNativePlatform?.());
+const _Cap     = window.Capacitor?.Plugins || {};
+console.log('[init] isNative:', isNative, 'Capacitor:', !!window.Capacitor, 'plugins:', Object.keys(_Cap).join(', '));
+
 // Show loading indicator immediately so screen is never blank
 document.addEventListener('DOMContentLoaded', () => {
   const app = document.querySelector('.app-shell');
@@ -1254,34 +1259,44 @@ function getPitch() { return pitchEnabled.checked ? parseInt(pitchRange.value) :
 });
 
 // ── Native save mode (APK only) ──
-if (isNative) {
-  // Show native UI, hide browser UI
-  document.getElementById('nativeSaveModes').style.display = '';
-  document.getElementById('browserSaveModes').style.display = 'none';
-  folderPickerRow.style.display = 'none';
+// Run after DOM ready to ensure elements exist
+function setupNativeSaveModes() {
+  if (!isNative) return;
+  const nativeSaveModesEl  = document.getElementById('nativeSaveModes');
+  const browserSaveModesEl = document.getElementById('browserSaveModes');
+  if (!nativeSaveModesEl || !browserSaveModesEl) {
+    console.warn('[native UI] elements not found, retrying...');
+    setTimeout(setupNativeSaveModes, 200);
+    return;
+  }
+  console.log('[native UI] switching to native save modes');
+  nativeSaveModesEl.style.display = '';
+  browserSaveModesEl.style.display = 'none';
+  if (folderPickerRow) folderPickerRow.style.display = 'none';
 
   const nativeModeSave  = document.getElementById('nativeModeSave');
   const nativeModeShare = document.getElementById('nativeModeShare');
   const nativeModeZip   = document.getElementById('nativeModeZip');
   const nativeSaveHint  = document.getElementById('nativeSaveHint');
 
+  const hints = {
+    save:  '💾 Saves to <strong>Documents/AudioShiftPro/</strong> on this device',
+    share: '📤 Opens share sheet after conversion — send to WhatsApp, Drive, email…',
+    zip:   '🗜 Zips all files and opens share sheet — send or save the ZIP',
+  };
+
   [nativeModeSave, nativeModeShare, nativeModeZip].forEach(btn => {
+    if (!btn) return;
     btn.addEventListener('click', () => {
-      [nativeModeSave, nativeModeShare, nativeModeZip].forEach(b => b.classList.remove('active'));
+      [nativeModeSave, nativeModeShare, nativeModeZip].forEach(b => b?.classList.remove('active'));
       btn.classList.add('active');
-      if (btn === nativeModeSave) {
-        nativeSaveMode = 'save';
-        nativeSaveHint.innerHTML = '💾 Saves to <strong>Documents/AudioShiftPro/</strong> on this device';
-      } else if (btn === nativeModeShare) {
-        nativeSaveMode = 'share';
-        nativeSaveHint.innerHTML = '📤 Opens share sheet after conversion — send to WhatsApp, Drive, email…';
-      } else {
-        nativeSaveMode = 'zip';
-        nativeSaveHint.innerHTML = '🗜 Zips all files and opens share sheet — send or save the ZIP';
-      }
+      nativeSaveMode = btn === nativeModeSave ? 'save' : btn === nativeModeShare ? 'share' : 'zip';
+      if (nativeSaveHint) nativeSaveHint.innerHTML = hints[nativeSaveMode];
+      refreshUI();
     });
   });
 }
+setupNativeSaveModes();
 // ── Shared folder handle setter — updates both Convert and Metadata picker labels ──
 function setFolderHandle(handle) {
   folderHandle = handle;
@@ -3320,8 +3335,7 @@ const _isStandalone = window.matchMedia('(display-mode: standalone)').matches
 // ════════════════════════════════════════════════════
 //  CAPACITOR NATIVE BRIDGE v3
 // ════════════════════════════════════════════════════
-const isNative = !!(window.Capacitor?.isNativePlatform?.());
-const _Cap = window.Capacitor?.Plugins || {};
+// ── Native bridge plugins already declared at top of script ──
 
 // Convert blob to base64 — pure binary, no data URI prefix
 async function blobToBase64(blob) {
