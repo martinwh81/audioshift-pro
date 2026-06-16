@@ -537,7 +537,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
           <button class="norm-batch-btn" id="normUniform" style="font-size:10px;padding:3px 8px;border-radius:10px;border:1px solid var(--border);background:var(--s2);cursor:pointer;">🎵 Uniform gain</button>
         </div>
         <!-- Analysis results — shown after file add or on demand -->
-        <div id="normAnalysis" style="display:none;font-size:10px;font-family:'JetBrains Mono',monospace;background:var(--s2);border-radius:var(--r2);padding:7px 10px;margin-bottom:6px;line-height:1.8;border:1px solid var(--border);"></div>
+        <div id="normAnalysis" style="display:none;font-size:10px;font-family:'JetBrains Mono',monospace;background:var(--s2);border-radius:var(--r2);padding:7px 10px;margin-bottom:6px;line-height:1.8;border:1px solid var(--border);overflow-x:auto;"></div>
         <div class="norm-note" id="normNote">Each file is analysed and scaled independently at encode time.</div>
       </div>
     </div>
@@ -4732,25 +4732,64 @@ async function runNormAnalysis() {
     // Build display
     let html = '';
     if (results.length === 1) {
-      const r = results[0];
-      const tpLine = useTruePeak ? `<br>True peak: <b>${r.truePeakDb.toFixed(1)} dBFS</b>` : '';
-      const safe   = r.afterPeakDb <= 0.1;
+      // Single file — inline detail
+      const r   = results[0];
+      const dr  = r.peakDb - r.rmsDb;
+      const drColor = dr < 6 ? '#c62828' : dr < 12 ? '#e65100' : '#2e7d32';
+      const drDot   = dr < 6 ? '🔴' : dr < 12 ? '🟡' : '🟢';
+      const tpLine  = useTruePeak
+        ? `<br>True peak: <b>${r.truePeakDb.toFixed(1)} dBFS</b>`
+        : '';
+      const safe = r.afterPeakDb <= 0.1;
       html = `Sample peak: ${r.peakDb.toFixed(1)} dBFS${tpLine}<br>` +
              `RMS: ${r.rmsDb.toFixed(1)} dBFS<br>` +
+             `Dynamic range: <span style="color:${drColor}">${drDot} ${dr.toFixed(1)} dB</span><br>` +
              `Gain to apply: <b style="color:var(--blue)">${r.gainDb >= 0 ? '+' : ''}${r.gainDb.toFixed(1)} dB</b><br>` +
              `After: ${r.afterPeakDb.toFixed(1)} dBFS ` +
-             (safe ? '<span style="color:#2e7d32">✅ No clipping</span>' : '<span style="color:#c62828">⚠ May clip</span>');
+             (safe ? '<span style="color:#2e7d32">✅ No clipping</span>'
+                   : '<span style="color:#c62828">⚠ May clip</span>');
     } else {
-      html = results.map(r => {
+      // Multiple files — table layout
+      const peakCol = useTruePeak ? 'TRUE PK' : 'PEAK';
+      html = `<table style="width:100%;border-collapse:collapse;font-size:9.5px;">` +
+             `<tr style="color:var(--tx3);border-bottom:1px solid var(--border);">` +
+             `<th style="text-align:left;padding:2px 4px 4px 0;font-weight:600;">FILE</th>` +
+             `<th style="text-align:right;padding:2px 4px;font-weight:600;">${peakCol}</th>` +
+             `<th style="text-align:right;padding:2px 4px;font-weight:600;">RMS</th>` +
+             `<th style="text-align:right;padding:2px 4px;font-weight:600;">GAIN</th>` +
+             `<th style="text-align:right;padding:2px 0 2px 4px;font-weight:600;">DR</th>` +
+             `</tr>`;
+
+      results.forEach(r => {
         const effectiveGain = normUniformGain ? uniformGainDb : r.gainDb;
-        const tpStr = useTruePeak ? ` · TP:${r.truePeakDb.toFixed(1)}` : '';
-        return `<span style="color:var(--tx2)">${r.name.slice(0,22)}</span>` +
-               `${tpStr} · Peak:${r.peakDb.toFixed(1)} dB · ` +
-               `<b style="color:var(--blue)">${effectiveGain >= 0 ? '+' : ''}${effectiveGain.toFixed(1)} dB</b>`;
-      }).join('<br>');
+        const peakVal = useTruePeak ? r.truePeakDb : r.peakDb;
+        const dr      = r.peakDb - r.rmsDb;
+        const drDot   = dr < 6 ? '🔴' : dr < 12 ? '🟡' : '🟢';
+        const name    = r.name.length > 18 ? r.name.slice(0, 16) + '…' : r.name;
+        const gainStr = (effectiveGain >= 0 ? '+' : '') + effectiveGain.toFixed(1);
+        const gainColor = effectiveGain > 0 ? 'var(--blue)' : effectiveGain < 0 ? '#c62828' : 'var(--tx3)';
+
+        html += `<tr style="border-bottom:1px solid var(--border);line-height:1.9;">` +
+                `<td style="padding:2px 4px 2px 0;color:var(--tx2);max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}</td>` +
+                `<td style="text-align:right;padding:2px 4px;color:var(--tx);">${peakVal.toFixed(1)}</td>` +
+                `<td style="text-align:right;padding:2px 4px;color:var(--tx3);">${r.rmsDb.toFixed(1)}</td>` +
+                `<td style="text-align:right;padding:2px 4px;color:${gainColor};font-weight:600;">${gainStr}</td>` +
+                `<td style="text-align:right;padding:2px 0 2px 4px;">${drDot} ${dr.toFixed(1)}</td>` +
+                `</tr>`;
+      });
+
+      html += `</table>`;
+
+      // Footer
       if (normUniformGain) {
-        html += `<br><span style="color:var(--tx3)">Uniform gain: ${uniformGainDb >= 0 ? '+' : ''}${uniformGainDb.toFixed(1)} dB (limited by loudest file)</span>`;
+        html += `<div style="margin-top:5px;color:var(--tx3);">` +
+                `Uniform gain: <b style="color:var(--blue)">${uniformGainDb >= 0 ? '+' : ''}${uniformGainDb.toFixed(1)} dB</b>` +
+                ` — limited by loudest file</div>`;
       }
+
+      // DR legend
+      html += `<div style="margin-top:4px;color:var(--tx3);font-size:9px;">` +
+              `DR: 🟢 >12 dB dynamic &nbsp; 🟡 6–12 dB &nbsp; 🔴 <6 dB compressed</div>`;
     }
 
     // Spotify note
