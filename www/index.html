@@ -3162,6 +3162,15 @@ convertBtn.addEventListener('click', async () => {
     // Reset bar to 0 so monotonic guard starts fresh for this file
     const _pb = document.getElementById('fprog-' + item.id);
     if (_pb) _pb.style.width = '0%';
+
+    // Timestamp helper — logs current time with message
+    const _ts = (msg) => {
+      const now = new Date();
+      const t = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3,'0');
+      console.log('[TS ' + t + '] ' + item.file.name + ' — ' + msg);
+    };
+
+    _ts('START');
     setItemProgress(item.id, 5, 'Decoding…');
     item.status = 'converting'; updateFileItem(item.id);
 
@@ -3173,6 +3182,7 @@ convertBtn.addEventListener('click', async () => {
       buf = await ac.decodeAudioData(ab);
       ac.close(); item.decodedBuf = buf;
     }
+    _ts('Decode done (' + buf.duration.toFixed(1) + 's audio)');
 
     // Auto-read metadata
     if (!item.metaEdited && !item.meta) {
@@ -3183,19 +3193,23 @@ convertBtn.addEventListener('click', async () => {
     // Speed / resample
     if (Math.abs(speed-1)>0.01 || (tgtSR>0 && tgtSR!==buf.sampleRate)) {
       setItemProgress(item.id, 15, 'Resampling…');
+      _ts('Resample start');
       const outSR = tgtSR>0?tgtSR:buf.sampleRate;
       const outLen = Math.max(1, Math.ceil(buf.length/speed));
       const oac = new OfflineAudioContext(buf.numberOfChannels, outLen, outSR);
       const src = oac.createBufferSource(); src.buffer=buf; src.playbackRate.value=speed;
       src.connect(oac.destination); src.start(0);
       buf = await oac.startRendering();
+      _ts('Resample done');
     }
 
     // Pitch (main thread only for WebCodecs formats)
     if (semitones !== 0 && !canUseWorker(fmt)) {
       console.log('[prepareFile] Applying pitch on main thread: semitones=', semitones, 'fmt=', fmt, 'getPitch()=', getPitch());
       setItemProgress(item.id, 20, `Pitch ${semitones>0?'+':''}${semitones}st…`);
+      _ts('Pitch start (main thread)');
       buf = await stftPitchShift(buf, semitones);
+      _ts('Pitch done');
       console.log('[prepareFile] Pitch done, buf duration=', buf.duration);
     }
 
@@ -3215,6 +3229,7 @@ convertBtn.addEventListener('click', async () => {
   // Helper: encode one file — Worker or WebCodecs
   async function encodeFile(item, buf) {
     let blob;
+    _ts('Encode start (' + fmt + ')');
     if (canUseWorker(fmt)) {
       setItemProgress(item.id, 18, 'Queued for encoding…');
       const result = await runInWorker({
@@ -3226,7 +3241,6 @@ convertBtn.addEventListener('click', async () => {
     } else if (fmt==='ogg')  { const r=await encodeWithWebCodecs(buf,'opus','ogg',br,item.id);  blob=r||(item._extOverride='wav',encodeWAV(buf)); }
     else if (fmt==='webm')   {
       const r=await encodeWithWebCodecs(buf,'opus','webm',br,item.id);
-      // Use .opus extension — better recognized by Android music apps than .webm
       if (r) { item._extOverride='opus'; blob=r; }
       else    { item._extOverride='wav'; blob=encodeWAV(buf); }
     }
@@ -3237,6 +3251,7 @@ convertBtn.addEventListener('click', async () => {
       console.log('[encodeFile] AAC done, fallback used='+(r?'no':'yes'));
     }
     else blob=encodeWAV(buf);
+    _ts('Encode done (' + fmt + ', ' + (blob?.size||0) + ' bytes)');
     return blob;
   }
 
@@ -3312,16 +3327,25 @@ convertBtn.addEventListener('click', async () => {
           counted = true;
         } else {
           try {
+            const _fileTs = (msg) => {
+              const now = new Date();
+              const t = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3,'0');
+              console.log('[TS ' + t + '] FILE ' + (toConvert.indexOf(item)+1) + '/' + toProcess + ' — ' + msg);
+            };
+            _fileTs('pipeline START → ' + item.file.name);
             const buf = await prepareFile(item);
-            if (!buf) { counted = true; } // skipped but still count
+            if (!buf) { counted = true; _fileTs('pipeline SKIPPED'); }
             else {
               counted = true;
               if (cancelRequested) {
                 item.status = 'cancelled'; updateFileItem(item.id);
                 setItemProgress(item.id, 0, '⚠ Cancelled');
               } else {
+                _fileTs('encode START');
                 const blob = await encodeFile(item, buf);
+                _fileTs('encode DONE → finalize');
                 await finalizeFile(item, blob);
+                _fileTs('pipeline COMPLETE ✅');
               }
             }
           } catch(err) {
