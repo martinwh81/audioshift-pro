@@ -3159,17 +3159,8 @@ convertBtn.addEventListener('click', async () => {
   async function prepareFile(item) {
     if (cancelRequested) throw new Error('Cancelled');
     item.blob = null; item.outName = null; item._extOverride = null; item.status = 'converting';
-    // Reset bar to 0 so monotonic guard starts fresh for this file
     const _pb = document.getElementById('fprog-' + item.id);
     if (_pb) _pb.style.width = '0%';
-
-    // Timestamp helper — logs current time with message
-    const _ts = (msg) => {
-      const now = new Date();
-      const t = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3,'0');
-      console.log('[TS ' + t + '] ' + item.file.name + ' — ' + msg);
-    };
-
     _ts('START');
     setItemProgress(item.id, 5, 'Decoding…');
     item.status = 'converting'; updateFileItem(item.id);
@@ -3298,6 +3289,9 @@ convertBtn.addEventListener('click', async () => {
     item.status = 'done'; updateFileItem(item.id);
   }
 
+  // Timestamp logger — shared across prepareFile and encodeFile
+  let _ts = (msg) => {}; // no-op until file starts
+
   // ── True parallel pipeline ──
   // Reset done counter fresh each run
   done = 0;
@@ -3327,25 +3321,27 @@ convertBtn.addEventListener('click', async () => {
           counted = true;
         } else {
           try {
-            const _fileTs = (msg) => {
+            const _fileIdx = toConvert.indexOf(item) + 1;
+            // Set shared _ts for this file
+            _ts = (msg) => {
               const now = new Date();
               const t = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3,'0');
-              console.log('[TS ' + t + '] FILE ' + (toConvert.indexOf(item)+1) + '/' + toProcess + ' — ' + msg);
+              console.log('[TS ' + t + '] FILE ' + _fileIdx + '/' + toProcess + ' ' + item.file.name + ' — ' + msg);
             };
-            _fileTs('pipeline START → ' + item.file.name);
+            _ts('pipeline START');
             const buf = await prepareFile(item);
-            if (!buf) { counted = true; _fileTs('pipeline SKIPPED'); }
+            if (!buf) { counted = true; _ts('pipeline SKIPPED'); }
             else {
               counted = true;
               if (cancelRequested) {
                 item.status = 'cancelled'; updateFileItem(item.id);
                 setItemProgress(item.id, 0, '⚠ Cancelled');
               } else {
-                _fileTs('encode START');
+                _ts('encode START');
                 const blob = await encodeFile(item, buf);
-                _fileTs('encode DONE → finalize');
+                _ts('encode DONE → finalize');
                 await finalizeFile(item, blob);
-                _fileTs('pipeline COMPLETE ✅');
+                _ts('pipeline COMPLETE ✅');
               }
             }
           } catch(err) {
