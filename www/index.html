@@ -3274,32 +3274,47 @@ async function nativePickFolder() {
   }
 }
 
-// Trigger file download in Capacitor WebView
-function triggerBlobDownload(blob, fileName) {
-  return new Promise(resolve => {
-    const url = URL.createObjectURL(blob);
-    console.log('[download] blobUrl created, size:', blob.size, 'type:', blob.type, 'fileName:', fileName);
-    console.log('[download] blobUrl:', url.substring(0, 60));
-    // Try window.open first
+// Trigger file download/save in Capacitor WebView
+async function triggerBlobDownload(blob, fileName) {
+  console.log('[download] START fileName:', fileName, 'size:', blob?.size, 'type:', blob?.type);
+
+  // Method 1: Use Share plugin to let user save — most reliable in Capacitor
+  const NativeFS = _Cap.Filesystem;
+  const NativeSh = _Cap.Share;
+  if (isNative && NativeFS && NativeSh) {
+    console.log('[download] trying Share plugin save...');
     try {
-      const win = window.open(url, '_blank');
-      console.log('[download] window.open result:', win ? 'opened' : 'null/blocked');
-      if (win) {
-        setTimeout(() => { URL.revokeObjectURL(url); resolve(true); }, 2000);
-        return;
+      const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const uri = await writeToCacheChunked(NativeFS, safeName, blob);
+      if (uri) {
+        console.log('[download] cached URI:', uri, '— opening share sheet for save');
+        await NativeSh.share({
+          title: 'Save ' + fileName,
+          files: [uri],
+          dialogTitle: 'Save audio file',
+        });
+        return true;
       }
-    } catch(e) { console.warn('[download] window.open threw:', String(e?.message||e)); }
-    // Fallback: anchor click
-    console.log('[download] trying anchor click fallback');
-    const a = document.createElement('a');
-    a.href = url; a.download = fileName;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    console.log('[download] anchor created, href:', a.href.substring(0,60), 'download:', a.download);
-    a.click();
-    console.log('[download] anchor clicked');
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); resolve(true); }, 1000);
-  });
+    } catch(e) {
+      const msg = String(e?.message||e);
+      if (!msg.toLowerCase().includes('cancel')) console.error('[download] share save failed:', msg);
+      else { console.log('[download] user cancelled share'); return false; }
+    }
+  }
+
+  // Method 2: anchor click with download attribute (works in browser, may work in WebView)
+  console.log('[download] trying anchor click...');
+  const url = URL.createObjectURL(blob);
+  console.log('[download] blobUrl:', url.substring(0, 60));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  console.log('[download] anchor clicked');
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+  return true;
 }
 
 // Write blob to CACHE directory in 192KB chunks
