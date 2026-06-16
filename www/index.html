@@ -3223,6 +3223,34 @@ async function blobToBase64(blob) {
   return b64;
 }
 
+// Write blob to Capacitor Filesystem in chunks to avoid IPC buffer overflow
+// Capacitor bridge serializes data as JSON — large base64 strings crash the WebView bridge
+// Solution: write first chunk with writeFile, append remaining chunks with appendFile
+async function writeFileChunked(NativeFS, path, directory, blob) {
+  const CHUNK_BYTES = 256 * 1024; // 256KB raw = ~341KB base64 — safe for Capacitor IPC
+  const buf   = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let isFirst = true;
+
+  console.log('[chunk] writing', blob.size, 'bytes in', Math.ceil(bytes.length / CHUNK_BYTES), 'chunks to', path);
+
+  for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
+    const slice = bytes.subarray(offset, offset + CHUNK_BYTES);
+    const b64   = btoa(String.fromCharCode.apply(null, slice));
+
+    if (isFirst) {
+      // writeFile creates/overwrites the file
+      const res = await NativeFS.writeFile({ path, data: b64, directory, recursive: true });
+      console.log('[chunk] first chunk written, uri:', res?.uri);
+      isFirst = false;
+    } else {
+      // appendFile adds to existing file
+      await NativeFS.appendFile({ path, data: b64, directory });
+    }
+  }
+  console.log('[chunk] all chunks written for', path);
+}
+
 // ── Folder picker ──
 let _nativeFolderUri = null;
 async function nativePickFolder() {
@@ -3252,21 +3280,15 @@ async function nativePickFolder() {
 // 3. If default Documents folder, use NativeFS.writeFile with DOCUMENTS directory
 async function nativeSaveFile(blob, fileName) {
   const NativeFS = _Cap.Filesystem;
-  console.log('[NativeFS] fileName:', fileName, 'size:', blob?.size, 'folderUri:', _nativeFolderUri);
+  console.log('[NativeFS] save:', fileName, 'size:', blob?.size, 'folderUri:', _nativeFolderUri);
   if (!NativeFS) { console.error('[NativeFS] plugin missing'); return false; }
 
-  // Sanitize filename for cache write — replace spaces with underscores temporarily
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const b64 = await blobToBase64(blob);
 
-  // Step 1: write to CACHE (always works)
+  // Step 1: write to CACHE in chunks (avoids Capacitor IPC buffer overflow)
   let cacheUri = null;
   try {
-    const cacheRes = await NativeFS.writeFile({
-      path: safeName, data: b64, directory: 'CACHE', recursive: true,
-    });
-    console.log('[NativeFS] cache write:', JSON.stringify(cacheRes));
-    // Get URI for copy operation
+    await writeFileChunked(NativeFS, safeName, 'CACHE', blob);
     const uriRes = await NativeFS.getUri({ path: safeName, directory: 'CACHE' });
     cacheUri = uriRes?.uri;
     console.log('[NativeFS] cache URI:', cacheUri);
@@ -3275,46 +3297,28 @@ async function nativeSaveFile(blob, fileName) {
     return false;
   }
 
-  // Step 2a: user picked SAF folder — use copy() to SAF destination
+  // Step 2a: copy from cache to user-picked SAF folder
   if (_nativeFolderUri && _nativeFolderUri !== '__documents__') {
     try {
-      // SAF URI tree → document URI for the file
-      const destUri = _nativeFolderUri + '/' + encodeURIComponent(fileName);
-      console.log('[NativeFS] copying to SAF:', destUri);
       const copyRes = await NativeFS.copy({
         from: safeName, directory: 'CACHE',
-        to: destUri,
+        to: _nativeFolderUri + '/' + encodeURIComponent(fileName),
       });
-      console.log('[NativeFS] copy result:', JSON.stringify(copyRes));
+      console.log('[NativeFS] SAF copy OK:', JSON.stringify(copyRes));
       return true;
     } catch(e) {
-      console.warn('[NativeFS] SAF copy failed:', String(e?.message || e), '— trying writeFile with full URI');
-      // Some versions support writeFile to SAF URI directly
-      try {
-        const b642 = await blobToBase64(blob);
-        const r = await NativeFS.writeFile({ path: _nativeFolderUri + '/' + fileName, data: b642 });
-        console.log('[NativeFS] direct URI write:', JSON.stringify(r));
-        return true;
-      } catch(e2) {
-        console.warn('[NativeFS] direct URI write also failed:', String(e2?.message || e2));
-        // Fall through to Documents save
-      }
+      console.warn('[NativeFS] SAF copy failed:', String(e?.message || e), '- falling back to Documents');
     }
   }
 
-  // Step 2b: write to Documents/AudioShiftPro/ (default or SAF fallback)
+  // Step 2b: write to Documents/AudioShiftPro/ in chunks
   try {
-    const docsRes = await NativeFS.writeFile({
-      path: 'AudioShiftPro/' + fileName, data: b64,
-      directory: 'DOCUMENTS', recursive: true,
-    });
-    console.log('[NativeFS] DOCUMENTS write:', JSON.stringify(docsRes));
+    await writeFileChunked(NativeFS, 'AudioShiftPro/' + fileName, 'DOCUMENTS', blob);
+    console.log('[NativeFS] DOCUMENTS write OK');
     return true;
   } catch(e) {
     console.error('[NativeFS] DOCUMENTS write FAILED:', String(e?.message || e));
-    // Last resort — file is at least in CACHE
-    console.log('[NativeFS] file is in CACHE as:', safeName, '(not in chosen folder)');
-    return !!cacheUri; // true if we at least cached it
+    return !!cacheUri;
   }
 }
 
@@ -3334,9 +3338,8 @@ async function nativeShareFiles(doneFiles) {
       // Use underscore-safe name for cache file
       const safeName = f.outName.replace(/[^a-zA-Z0-9._-]/g, '_');
       console.log('[Share] writing to cache:', safeName, 'size:', f.blob.size);
-      const b64 = await blobToBase64(f.blob);
       try {
-        await NativeFS.writeFile({ path: safeName, data: b64, directory: 'CACHE', recursive: true });
+        await writeFileChunked(NativeFS, safeName, 'CACHE', f.blob);
       } catch(we) {
         console.error('[Share] cache write failed:', String(we?.message || we));
         continue;
