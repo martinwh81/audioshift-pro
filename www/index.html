@@ -3249,6 +3249,29 @@ window.addEventListener('load', async () => {
     console.log("[DIAG] 200KB blob write OK, URI:", uriRes?.uri);
   } catch(e) { console.error("[DIAG] 200KB blob write FAIL:", String(e?.message||e)); }
 
+
+  // Test: FileReader + Blob.slice (the fix we are using)
+  try {
+    const testBlob = new Blob([new Uint8Array(200000)], { type: "audio/mpeg" });
+    const CHUNK = 32768;
+    const n = Math.ceil(testBlob.size / CHUNK);
+    console.log("[DIAG] FileReader test:", testBlob.size, "bytes,", n, "chunks");
+    for (let i = 0; i < n; i++) {
+      const chunk = testBlob.slice(i*CHUNK, Math.min((i+1)*CHUNK, testBlob.size));
+      const b64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result.split(",")[1]);
+        r.onerror = () => rej(r.error);
+        r.readAsDataURL(chunk);
+      });
+      if (i === 0) await NativeFS.writeFile({ path: "diag_fr.bin", data: b64, directory: "CACHE", recursive: true });
+      else await NativeFS.appendFile({ path: "diag_fr.bin", data: b64, directory: "CACHE" });
+      if (i === 0 || i === n-1) console.log("[DIAG] FR chunk", i, "b64 len:", b64?.length);
+    }
+    const uri = await NativeFS.getUri({ path: "diag_fr.bin", directory: "CACHE" });
+    console.log("[DIAG] FileReader 200KB OK, URI:", uri?.uri);
+  } catch(e) { console.error("[DIAG] FileReader FAIL:", String(e?.message||e)); }
+
   console.log("[DIAG] === ALL TESTS COMPLETE ===");
 });
 
@@ -3403,51 +3426,63 @@ function getWriteBlob() {
   return wb || null;
 }
 
-// Write blob to CACHE using native blob writer
+// Write blob to CACHE using FileReader (avoids arrayBuffer() threading issues)
+// FileReader reads on a background thread, avoiding Capacitor bridge deadlock
+function blobToBase64ViaFileReader(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      // Result is "data:mime/type;base64,XXXX" — strip the prefix
+      const b64 = reader.result.split(',')[1];
+      console.log('[FileReader] done, b64 length:', b64?.length);
+      resolve(b64);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
 async function writeBlobToCache(safeName, blob) {
   const NativeFS = _Cap.Filesystem;
   if (!NativeFS) throw new Error('Filesystem plugin missing');
 
   const writeBlob = getWriteBlob();
-  console.log('[blob-writer] available:', !!writeBlob);
-
   if (writeBlob) {
-    // Use capacitor-blob-writer — native, no base64, no bridge limits
+    console.log('[write] using capacitor-blob-writer');
     try {
-      console.log('[blob-writer] writing', blob.size, 'bytes as', safeName);
       await writeBlob({ path: safeName, directory: 'CACHE', blob, recursive: true });
-      console.log('[blob-writer] write OK');
+      console.log('[write] blob-writer OK');
     } catch(e) {
-      console.error('[blob-writer] write FAILED:', String(e?.message||e));
+      console.error('[write] blob-writer FAILED:', String(e?.message||e));
       throw e;
     }
   } else {
-    // Fallback: small chunks via writeFile + appendFile
-    console.log('[blob-writer] not available — using 32KB chunk fallback');
-    const CHUNK = 32 * 1024;
-    const buf   = await blob.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    const n     = Math.ceil(bytes.length / CHUNK);
-    console.log('[chunk] writing', blob.size, 'bytes,', n, 'chunks →', safeName);
-    for (let i = 0; i < n; i++) {
-      const slice = bytes.subarray(i*CHUNK, Math.min((i+1)*CHUNK, bytes.length));
-      let b64 = '';
-      for (let j = 0; j < slice.length; j += 4096)
-        b64 += btoa(String.fromCharCode.apply(null, slice.subarray(j, j+4096)));
+    // Use FileReader to convert blob to base64 (avoids arrayBuffer threading issue)
+    console.log('[write] using FileReader chunked approach, blob size:', blob.size);
+    const CHUNK_SIZE = 32 * 1024; // 32KB chunks
+    const totalChunks = Math.ceil(blob.size / CHUNK_SIZE);
+    console.log('[write] total chunks:', totalChunks);
+
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end   = Math.min(start + CHUNK_SIZE, blob.size);
+      const chunk = blob.slice(start, end); // Blob.slice — no arrayBuffer needed
+      const b64   = await blobToBase64ViaFileReader(chunk);
+      if (!b64) throw new Error('FileReader returned empty result for chunk ' + i);
+
       if (i === 0) {
         const res = await NativeFS.writeFile({ path: safeName, data: b64, directory: 'CACHE', recursive: true });
-        console.log('[chunk] chunk 0 OK:', JSON.stringify(res));
+        console.log('[write] chunk 0 OK, uri:', res?.uri);
       } else {
         await NativeFS.appendFile({ path: safeName, data: b64, directory: 'CACHE' });
-        if (i === 1 || i % 100 === 0) console.log('[chunk]', i, '/', n, 'OK');
+        if (i === 1 || i % 50 === 0) console.log('[write] chunk', i, '/', totalChunks, 'OK');
       }
     }
-    console.log('[chunk] all done');
+    console.log('[write] all', totalChunks, 'chunks done:', safeName);
   }
 
-  // Get file URI for sharing
   const uriRes = await NativeFS.getUri({ path: safeName, directory: 'CACHE' });
-  console.log('[blob-writer] URI:', JSON.stringify(uriRes));
+  console.log('[write] final URI:', JSON.stringify(uriRes));
   return uriRes?.uri || null;
 }
 
