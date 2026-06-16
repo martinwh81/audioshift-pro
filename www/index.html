@@ -3422,92 +3422,62 @@ async function nativeSaveFile(blob, fileName) {
 
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
 
-  // Write to CACHE first
-  let cacheUri;
-  try {
-    cacheUri = await writeBlobToCache(safeName, blob);
-    if (!cacheUri) { console.error('[save] no cache URI returned'); return false; }
-    console.log('[save] cached at:', cacheUri);
-  } catch(e) {
-    console.error('[save] cache write FAILED:', String(e?.message||e));
-    return false;
-  }
-
-  // If folder chosen — try to copy there
+  // If folder chosen — write directly to destination using chunked FileReader
   if (_nativeFolderUri) {
     try {
       const decoded = decodeURIComponent(_nativeFolderUri);
       console.log('[save] decoded folderUri:', decoded);
       const match = decoded.match(/primary:(.+)/);
       if (match) {
-        const folderPath = match[1]; // e.g. "Martin piano/Test/Output"
+        const folderPath = match[1];
         const destPath   = '/storage/emulated/0/' + folderPath + '/' + fileName;
-        console.log('[save] dest path:', destPath);
+        console.log('[save] writing directly to:', destPath);
 
-        // Try method 1: copy using path+directory (most reliable)
-        try {
-          const copyRes = await NativeFS.copy({
-            from:      safeName,
-            directory: 'CACHE',
-            to:        destPath,
-          });
-          console.log('[save] copy method 1 OK:', JSON.stringify(copyRes));
-          return true;
-        } catch(e1) {
-          console.warn('[save] copy method 1 failed:', String(e1?.message||e1));
-        }
-
-        // Try method 2: writeFile directly to absolute path
-        try {
-          const chunk = blob.slice(0, blob.size);
+        // Write to destination using FileReader chunks + appendFile
+        const CHUNK = 32 * 1024;
+        const total = Math.ceil(blob.size / CHUNK);
+        for (let i = 0; i < total; i++) {
+          const chunk = blob.slice(i * CHUNK, Math.min((i + 1) * CHUNK, blob.size));
           const b64 = await new Promise((res, rej) => {
             const r = new FileReader();
-            r.onload = () => res(r.result.split(',')[1]);
+            r.onload  = () => res(r.result.split(',')[1]);
             r.onerror = () => rej(r.error);
             r.readAsDataURL(chunk);
           });
-          // Write whole file if small enough, else report error
-          if (blob.size <= 512 * 1024) {
-            await NativeFS.writeFile({ path: destPath, data: b64, recursive: true });
-            console.log('[save] direct write OK');
-            return true;
+          if (i === 0) {
+            const res = await NativeFS.writeFile({ path: destPath, data: b64, recursive: true });
+            console.log('[save] dest chunk 0 OK:', JSON.stringify(res));
           } else {
-            console.warn('[save] file too large for direct write, trying chunked...');
-            const destSafe = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-            const cacheUri2 = await writeBlobToCache(destSafe + '_dest', blob);
-            if (cacheUri2) {
-              const copyRes2 = await NativeFS.copy({ from: cacheUri2, to: destPath });
-              console.log('[save] copy from cache2 OK:', JSON.stringify(copyRes2));
-              return true;
-            }
+            await NativeFS.appendFile({ path: destPath, data: b64 });
+            if (i % 100 === 0) console.log('[save] dest chunk', i, '/', total);
           }
-        } catch(e2) {
-          console.error('[save] copy method 2 failed:', String(e2?.message||e2));
         }
+        console.log('[save] direct write to folder COMPLETE:', destPath);
+        return true;
       } else {
         console.warn('[save] could not parse path from URI:', decoded);
       }
     } catch(e) {
-      console.error('[save] folder save error:', String(e?.message||e));
+      console.error('[save] direct folder write FAILED:', String(e?.message||e));
     }
-
-    // Folder save failed — show error, do NOT auto-open share
-    console.error('[save] all folder save methods failed — file is in app cache only');
+    // Folder write failed
     return false;
   }
 
-  // No folder chosen — open share sheet so user can save where they want
-  if (NativeSh) {
-    console.log('[save] no folder — opening share sheet');
-    try {
-      await NativeSh.share({ title: 'Save ' + fileName, files: [cacheUri], dialogTitle: 'Save audio file' });
-      return true;
-    } catch(e) {
-      const msg = String(e?.message||e);
-      if (!msg.toLowerCase().includes('cancel')) console.error('[save] share failed:', msg);
-    }
+  // No folder chosen — write to cache then open share sheet
+  try {
+    const cacheUri = await writeBlobToCache(safeName, blob);
+    if (!cacheUri) { console.error('[save] no cache URI'); return false; }
+    console.log('[save] cached at:', cacheUri);
+    if (!NativeSh) return false;
+    console.log('[save] opening share sheet');
+    await NativeSh.share({ title: 'Save ' + fileName, files: [cacheUri], dialogTitle: 'Save audio file' });
+    return true;
+  } catch(e) {
+    const msg = String(e?.message||e);
+    if (!msg.toLowerCase().includes('cancel')) console.error('[save] share FAILED:', msg);
+    return false;
   }
-  return false;
 }
 
 // Share via Android share sheet
