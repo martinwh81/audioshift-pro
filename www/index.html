@@ -3190,6 +3190,44 @@ zipBtn.addEventListener('click', async () => {
 
 
 
+
+// ── Startup Filesystem diagnostic — runs on load, shows in debug console ──
+window.addEventListener('load', async () => {
+  if (!window.Capacitor?.isNativePlatform?.()) return;
+  const NativeFS = window.Capacitor?.Plugins?.Filesystem;
+  console.log('[DIAG] Filesystem plugin:', !!NativeFS);
+  if (!NativeFS) return;
+
+  const tests = [
+    { name: 'tiny text DATA',    path: 'diag_text.txt', data: 'hello',          directory: 'DATA'  },
+    { name: 'tiny b64 DATA',     path: 'diag_b64.bin',  data: btoa('hi'),       directory: 'DATA'  },
+    { name: 'tiny b64 CACHE',    path: 'diag_b64.bin',  data: btoa('hi'),       directory: 'CACHE' },
+    { name: '32KB b64 DATA',     path: 'diag_32k.bin',  data: btoa('x'.repeat(24000)), directory: 'DATA'  },
+    { name: '32KB b64 CACHE',    path: 'diag_32k.bin',  data: btoa('x'.repeat(24000)), directory: 'CACHE' },
+  ];
+
+  for (const t of tests) {
+    try {
+      const res = await NativeFS.writeFile({ path: t.path, data: t.data, directory: t.directory, recursive: true });
+      console.log('[DIAG] OK:', t.name, 'uri:', res?.uri || '(no uri)');
+    } catch(e) {
+      console.error('[DIAG] FAIL:', t.name, '→', String(e?.message||e));
+    }
+  }
+
+  // Test getUri
+  try {
+    const r = await NativeFS.getUri({ path: 'diag_b64.bin', directory: 'CACHE' });
+    console.log('[DIAG] getUri CACHE:', JSON.stringify(r));
+  } catch(e) { console.error('[DIAG] getUri CACHE FAIL:', String(e?.message||e)); }
+
+  // Test appendFile
+  try {
+    await NativeFS.appendFile({ path: 'diag_b64.bin', data: btoa('more'), directory: 'CACHE' });
+    console.log('[DIAG] appendFile OK');
+  } catch(e) { console.error('[DIAG] appendFile FAIL:', String(e?.message||e)); }
+});
+
 // ════════════════════════════════════════════════════
 //  PWA — STANDALONE MODE DETECTION ONLY
 // ════════════════════════════════════════════════════
