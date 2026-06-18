@@ -251,6 +251,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 .norm-note{font-size:10px;color:var(--tx3);margin-bottom:7px;line-height:1.5;}
 .norm-batch-btn{font-size:10px;padding:3px 8px;border-radius:10px;border:1px solid var(--border);background:var(--s2);cursor:pointer;color:var(--tx3);transition:all .12s;}
 .norm-batch-btn.active{border-color:var(--blue);background:#EDF4FB;color:var(--blue);font-weight:600;}
+.platform-preset-btn{font-size:9px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:var(--s2);cursor:pointer;color:var(--tx3);transition:all .12s;white-space:nowrap;}
+.platform-preset-btn:hover{border-color:var(--accent);color:var(--accent);}
+.platform-preset-btn.active{border-color:var(--accent);background:#FDF0E8;color:var(--accent);font-weight:600;}
 .btn-norm{width:100%;padding:10px;border-radius:var(--r2);border:none;background:var(--blue);color:#fff;font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;}
 
 /* Metadata */
@@ -302,7 +305,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 /* ── Fade controls ── */
 /* Fade controls */
 .fade-section{display:flex;flex-direction:column;gap:6px;margin-bottom:8px;}
-.fade-row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.fade-row2{display:flex;flex-direction:column;gap:10px;}
 .fade-group{display:flex;flex-direction:column;gap:3px;}
 .fade-header{display:flex;align-items:center;gap:5px;}
 .fade-header input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer;flex-shrink:0;}
@@ -454,9 +457,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
           <option value="64">64 kbps</option>
           <option value="96">96 kbps</option>
           <option value="128">128 kbps</option>
-          <option value="192" selected>192 kbps</option>
+          <option value="192">192 kbps</option>
           <option value="256">256 kbps</option>
-          <option value="320">320 kbps</option>
+          <option value="320" selected>320 kbps</option>
         </select>
       </div>
       <div class="sel-group">
@@ -509,34 +512,49 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
         <label for="normEnabled" style="font-size:11px;font-weight:600;color:var(--tx);cursor:pointer;text-transform:uppercase;letter-spacing:.06em;">⊿ Volume Normalize</label>
       </div>
       <div id="normControls" style="opacity:.4;pointer-events:none;">
-        <div class="norm-opts">
+        <!-- Mode: Peak / RMS / LUFS -->
+        <div class="norm-opts" style="grid-template-columns:1fr 1fr 1fr;">
           <div class="norm-opt active" data-norm="peak">
             <div class="norm-opt-title">Peak</div>
-            <div class="norm-opt-sub">Max sample = target</div>
+            <div class="norm-opt-sub">Max sample</div>
           </div>
           <div class="norm-opt" data-norm="rms">
             <div class="norm-opt-title">RMS</div>
-            <div class="norm-opt-sub">Avg loudness = target</div>
+            <div class="norm-opt-sub">Avg loudness</div>
+          </div>
+          <div class="norm-opt" data-norm="lufs">
+            <div class="norm-opt-title">LUFS</div>
+            <div class="norm-opt-sub">Perceived loudness</div>
           </div>
         </div>
+        <!-- Target -->
         <div class="norm-target-row">
           <span class="norm-target-label">Target</span>
           <input class="norm-target-input" id="normTarget" value="-1.0">
-          <span class="norm-unit">dBFS</span>
+          <span class="norm-unit" id="normUnit">dBFS</span>
         </div>
-        <!-- True peak + Spotify preset -->
+        <!-- True peak -->
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
           <input type="checkbox" id="truePeakEnabled" style="width:13px;height:13px;accent-color:var(--blue);cursor:pointer;flex-shrink:0;">
-          <label for="truePeakEnabled" style="font-size:10px;color:var(--tx3);cursor:pointer;">True peak detection (4× oversample)</label>
-          <button id="spotifyPresetBtn" style="margin-left:auto;font-size:9px;padding:2px 7px;border-radius:10px;border:1px solid #1DB954;background:transparent;color:#1DB954;cursor:pointer;font-weight:600;white-space:nowrap;">🎵 Spotify</button>
+          <label for="truePeakEnabled" style="font-size:10px;color:var(--tx3);cursor:pointer;">True peak limit</label>
+          <input type="number" id="truePeakTarget" value="-1.0" min="-3" max="0" step="0.1"
+            style="width:44px;font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--tx);background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:2px 4px;text-align:right;outline:none;">
+          <span style="font-size:10px;color:var(--tx3);">dBFS</span>
+        </div>
+        <!-- Platform presets -->
+        <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;">
+          <button class="platform-preset-btn" data-lufs="-14" data-tp="-1.0" data-label="Spotify">🎵 Spotify</button>
+          <button class="platform-preset-btn" data-lufs="-16" data-tp="-1.0" data-label="Apple">🍎 Apple</button>
+          <button class="platform-preset-btn" data-lufs="-14" data-tp="-1.0" data-label="YouTube">▶ YouTube</button>
+          <button class="platform-preset-btn" data-lufs="-16" data-tp="-1.0" data-label="Podcast">🎙 Podcast</button>
         </div>
         <!-- Uniform gain for batch -->
         <div id="uniformGainRow" style="display:none;align-items:center;gap:8px;margin-bottom:6px;">
           <span style="font-size:10px;color:var(--tx3);">Batch:</span>
-          <button class="norm-batch-btn active" id="normPerFile" style="font-size:10px;padding:3px 8px;border-radius:10px;border:1px solid var(--border);background:var(--s2);cursor:pointer;">📁 Per file</button>
-          <button class="norm-batch-btn" id="normUniform" style="font-size:10px;padding:3px 8px;border-radius:10px;border:1px solid var(--border);background:var(--s2);cursor:pointer;">🎵 Uniform gain</button>
+          <button class="norm-batch-btn active" id="normPerFile">📁 Per file</button>
+          <button class="norm-batch-btn" id="normUniform">🎵 Uniform gain</button>
         </div>
-        <!-- Analysis results — shown after file add or on demand -->
+        <!-- Analysis results -->
         <div id="normAnalysis" style="display:none;font-size:10px;font-family:'JetBrains Mono',monospace;background:var(--s2);border-radius:var(--r2);padding:7px 10px;margin-bottom:6px;line-height:1.8;border:1px solid var(--border);overflow-x:auto;"></div>
         <div class="norm-note" id="normNote">Each file is analysed and scaled independently at encode time.</div>
       </div>
@@ -558,17 +576,19 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
     </div>
     <!-- A/B toggle + player -->
     <div class="ab-label" id="prevAbLabel" style="margin-bottom:5px;">A = original</div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap;">
       <button class="play-btn" id="prevPlayBtn" disabled>▶</button>
       <div class="ab-toggle">
         <button class="ab-btn active" id="prevBtnA">A</button>
         <button class="ab-btn" id="prevBtnB">B</button>
       </div>
-      <div class="seek-wrap" style="flex:1;"><input type="range" id="prevSeek" min="0" max="100" step="0.1" value="0"></div>
+      <button id="prevGoStart" style="padding:3px 7px;font-size:11px;border-radius:var(--r2);border:1px solid var(--border);background:var(--s2);color:var(--tx3);cursor:pointer;">⏮ Start</button>
+      <button id="prevGoEnd" style="padding:3px 7px;font-size:11px;border-radius:var(--r2);border:1px solid var(--border);background:var(--s2);color:var(--tx3);cursor:pointer;">End ⏭</button>
+      <div class="seek-wrap" style="flex:1;min-width:80px;"><input type="range" id="prevSeek" min="0" max="100" step="0.1" value="0"></div>
       <span class="t-now" id="prevTime">0:00 / 0:00</span>
     </div>
     <div id="prevStatus" style="font-size:10px;color:var(--tx3);text-align:center;min-height:16px;"></div>
-    <div style="font-size:9px;color:var(--tx3);margin-top:4px;text-align:center;">A = original · B = speed + pitch + normalize applied · tap B to process</div>
+    <div style="font-size:9px;color:var(--tx3);margin-top:4px;text-align:center;">A = original · B = all settings applied (30s) · ⏮/⏭ jump to trim points</div>
   </div>
 
   <!-- Presets -->
@@ -754,20 +774,22 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
             <div class="fade-header">
               <input type="checkbox" id="fadeInEnabled">
               <label for="fadeInEnabled">Fade In</label>
-              <input type="number" class="fade-input" id="fadeInInput" min="0" max="10" step="0.05" value="0" disabled>
+              <input type="number" class="fade-input" id="fadeInInput" min="0" max="10" step="0.05" value="1.50" disabled>
+              <span style="font-size:9px;color:var(--tx3);">s</span>
             </div>
             <div class="fade-slider-wrap" id="fadeInWrap">
-              <input type="range" class="fade-slider" id="fadeInRange" min="0" max="10" step="0.1" value="0">
+              <input type="range" class="fade-slider" id="fadeInRange" min="0" max="10" step="0.1" value="1.5">
             </div>
           </div>
           <div class="fade-group">
             <div class="fade-header">
               <input type="checkbox" id="fadeOutEnabled">
               <label for="fadeOutEnabled">Fade Out</label>
-              <input type="number" class="fade-input" id="fadeOutInput" min="0" max="10" step="0.05" value="0" disabled>
+              <input type="number" class="fade-input" id="fadeOutInput" min="0" max="10" step="0.05" value="1.50" disabled>
+              <span style="font-size:9px;color:var(--tx3);">s</span>
             </div>
             <div class="fade-slider-wrap" id="fadeOutWrap">
-              <input type="range" class="fade-slider" id="fadeOutRange" min="0" max="10" step="0.1" value="0">
+              <input type="range" class="fade-slider" id="fadeOutRange" min="0" max="10" step="0.1" value="1.5">
             </div>
           </div>
         </div>
@@ -786,10 +808,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
           <button class="ab-btn active" id="abBtnA">A</button>
           <button class="ab-btn" id="abBtnB">B</button>
         </div>
+        <button id="goTrimStart" style="padding:3px 7px;font-size:11px;border-radius:var(--r2);border:1px solid var(--border);background:var(--s2);color:var(--tx3);cursor:pointer;">⏮</button>
+        <button id="goTrimEnd" style="padding:3px 7px;font-size:11px;border-radius:var(--r2);border:1px solid var(--border);background:var(--s2);color:var(--tx3);cursor:pointer;">⏭</button>
         <div class="seek-wrap"><input type="range" id="seekSl" min="0" max="100" step="0.001" value="0"></div>
         <span class="t-now" id="tNow">0:00.000 / 0:00</span>
       </div>
-      <div style="font-size:9px;color:var(--tx3);text-align:center;margin-bottom:6px;">A = original · B = trim+fade applied</div>
+      <div style="font-size:9px;color:var(--tx3);text-align:center;margin-bottom:6px;">A = original · B = trim+fade+all settings (30s) · ⏮/⏭ jump to trim points</div>
 
       <div class="trim-action-row">
         <button class="btn-apply" id="applyTrimBtn">✓ Apply Trim + Fade</button>
@@ -2512,22 +2536,29 @@ if (truePeakEnabled) {
   });
 }
 
-// Spotify preset — Peak, -1.0 dBFS TP
-const spotifyPresetBtn = document.getElementById('spotifyPresetBtn');
-if (spotifyPresetBtn) {
-  spotifyPresetBtn.addEventListener('click', () => {
+// Platform preset buttons
+document.querySelectorAll('.platform-preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
     if (!normEnabled.checked) { normEnabled.checked = true; normEnabled.dispatchEvent(new Event('change')); }
-    // Set Peak mode
+    // Set LUFS mode
     document.querySelectorAll('.norm-opt').forEach(o => o.classList.remove('active'));
-    document.querySelector('.norm-opt[data-norm="peak"]')?.classList.add('active');
-    normMode = 'peak';
-    // Set -1.0 dBFS
-    if (normTarget) normTarget.value = '-1.0';
-    // Enable true peak
-    if (truePeakEnabled) { truePeakEnabled.checked = true; normTruePeak = true; }
+    document.querySelector('.norm-opt[data-norm="lufs"]')?.classList.add('active');
+    normMode = 'lufs';
+    const unitEl = document.getElementById('normUnit');
+    if (unitEl) unitEl.textContent = 'LUFS';
+    // Set target LUFS
+    if (normTarget) normTarget.value = btn.dataset.lufs;
+    // Set true peak
+    const tpEl = document.getElementById('truePeakEnabled');
+    const tpTgt = document.getElementById('truePeakTarget');
+    if (tpEl) { tpEl.checked = true; normTruePeak = true; }
+    if (tpTgt) tpTgt.value = btn.dataset.tp;
+    // Highlight active preset
+    document.querySelectorAll('.platform-preset-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
     runNormAnalysis();
   });
-}
+});
 
 // Batch mode buttons
 const normPerFileBtn  = document.getElementById('normPerFile');
@@ -2554,6 +2585,12 @@ document.querySelectorAll('.norm-opt').forEach(opt => {
     if (!normEnabled.checked) return;
     document.querySelectorAll('.norm-opt').forEach(o => o.classList.remove('active'));
     opt.classList.add('active'); normMode = opt.dataset.norm;
+    // Update unit label and default target
+    const unitEl = document.getElementById('normUnit');
+    if (unitEl) unitEl.textContent = normMode === 'lufs' ? 'LUFS' : 'dBFS';
+    if (normMode === 'lufs' && normTarget && parseFloat(normTarget.value) > -1) {
+      normTarget.value = '-14.0'; // sensible LUFS default
+    }
     runNormAnalysis();
   });
 });
@@ -4353,20 +4390,40 @@ async function prevProcessB() {
   if (!prevRawBuf) return;
   const speed     = getSpeed();
   const semitones = getPitch();
-  if (speed === 1.0 && semitones === 0 && !normEnabled.checked) {
+  const doNorm    = normEnabled.checked;
+
+  // Trim + fade settings from Trim page
+  const tS = typeof tsRange !== 'undefined' ? parseFloat(tsRange.value) : 0;
+  const tE = typeof teRange !== 'undefined' ? parseFloat(teRange.value) : prevRawBuf.duration;
+  const fi = typeof fadeInEnabled  !== 'undefined' && fadeInEnabled.checked  ? parseFloat(fadeInRange.value)  : 0;
+  const fo = typeof fadeOutEnabled !== 'undefined' && fadeOutEnabled.checked ? parseFloat(fadeOutRange.value) : 0;
+
+  // 30s window from seek position within trim region
+  const WIN        = 30;
+  const seekFrac   = parseFloat(prevSeek.value) / 100;
+  const seekPos    = seekFrac * prevRawBuf.duration;
+  const winStart   = Math.max(tS, Math.min(tE - 0.5, seekPos));
+  const winEnd     = Math.min(tE, winStart + WIN);
+
+  const noChanges  = speed === 1.0 && semitones === 0 && !doNorm
+                  && tS === 0 && tE >= prevRawBuf.duration - 0.01
+                  && fi === 0 && fo === 0;
+  if (noChanges) {
     prevBuf = prevRawBuf;
     prevSetStatus('(no changes — B same as A)');
     prevPlayBtn.disabled = false;
-    prevPlayFn(0); return;
+    return;
   }
-  prevSetStatus('⏳ Processing…'); prevPlayBtn.disabled = true; await tick();
+
+  prevSetStatus('\u23f3 Processing 30s from ' + fmtTime(winStart) + '\u2026');
+  prevPlayBtn.disabled = true; await tick();
   let _prevWakeLock = null;
   if ('wakeLock' in navigator) {
     try { _prevWakeLock = await navigator.wakeLock.request('screen'); } catch(e) {}
   }
   try {
-    const MAX = 60;
-    let buf = prevRawBuf.duration > MAX ? trimBuf(prevRawBuf, 0, MAX) : prevRawBuf;
+    let buf = trimBuf(prevRawBuf, winStart, winEnd);
+
     if (Math.abs(speed - 1) > 0.01) {
       const outLen = Math.max(1, Math.ceil(buf.length / speed));
       const oac = new OfflineAudioContext(buf.numberOfChannels, outLen, buf.sampleRate);
@@ -4375,21 +4432,35 @@ async function prevProcessB() {
       src.connect(oac.destination); src.start(0);
       buf = await oac.startRendering(); await tick();
     }
-    if (semitones !== 0) { prevSetStatus('⏳ Pitch shifting…'); await tick(); buf = await stftPitchShift(buf, semitones); }
-
-    // Apply normalization if enabled
-    if (normEnabled.checked) {
-      prevSetStatus('⏳ Normalizing…'); await tick();
+    if (semitones !== 0) {
+      prevSetStatus('\u23f3 Pitch shifting from ' + fmtTime(winStart) + '\u2026'); await tick();
+      buf = await stftPitchShift(buf, semitones);
+    }
+    if (doNorm) {
+      prevSetStatus('\u23f3 Normalizing\u2026'); await tick();
       buf = normalizeBuf(buf, normMode || 'peak', parseFloat(normTarget.value) || -1);
+    }
+    // Apply fade only at trim boundaries
+    const atStart = winStart <= tS + 0.1;
+    const atEnd   = winEnd   >= tE  - 0.1;
+    if ((atStart && fi > 0) || (atEnd && fo > 0)) {
+      buf = applyFadeIfNeeded ? applyFadeIfNeeded(buf) : buf;
+      buf = (typeof applyFade !== 'undefined')
+        ? applyFade(buf, atStart ? fi : 0, atEnd ? fo : 0) : buf;
     }
 
     prevBuf = buf;
-    const normNote = normEnabled.checked ? ' + normalized' : '';
-    prevSetStatus('✓ First ' + Math.round(Math.min(prevRawBuf.duration, MAX)) + 's processed' + normNote);
+    const details = [];
+    if (semitones !== 0) details.push((semitones > 0 ? '+' : '') + semitones + 'st');
+    if (Math.abs(speed - 1) > 0.01) details.push(speed + '\u00d7');
+    if (doNorm) details.push('norm');
+    if (tS > 0 || tE < prevRawBuf.duration - 0.01) details.push('trim');
+    if (fi > 0) details.push('fade-in'); if (fo > 0) details.push('fade-out');
+    const det = details.length ? ' [' + details.join(', ') + ']' : '';
+    prevSetStatus('\u2713 30s from ' + fmtTime(winStart) + det + ' \u2014 tap \u25b6 to play');
     prevPlayBtn.disabled = false;
-    prevPlayFn(0);
   } catch(e) {
-    prevSetStatus('✗ ' + e.message, 'var(--red)');
+    prevSetStatus('\u2717 ' + e.message);
     prevPlayBtn.disabled = false;
   } finally {
     if (_prevWakeLock) { try { await _prevWakeLock.release(); } catch(e) {} }
@@ -4425,7 +4496,15 @@ function prevTickFn() {
 
 prevPlayBtn.addEventListener('click', async () => {
   if (prevPlaying) { prevStop(); return; }
-  if (prevMode === 'B' && prevBuf === prevRawBuf) { await prevProcessB(); return; }
+  // B mode — process if needed then play
+  if (prevMode === 'B' && (!prevBuf || prevBuf === prevRawBuf)) {
+    await prevProcessB();
+    if (prevBuf) {
+      const pos = parseFloat(prevSeek.value) / 100 * prevBuf.duration;
+      prevPlayFn(pos);
+    }
+    return;
+  }
   if (!prevBuf && prevRawBuf) prevBuf = prevRawBuf;
   if (!prevBuf) { prevSetStatus('Tap ↺ Load first'); return; }
   const pos = parseFloat(prevSeek.value) / 100 * prevBuf.duration;
@@ -4437,6 +4516,26 @@ prevSeek.addEventListener('input', () => {
   const pos = parseFloat(prevSeek.value) / 100 * prevBuf.duration;
   prevTime.textContent = fmtTime(pos) + ' / ' + fmtTime(prevBuf.duration);
   if (prevPlaying) prevPlayFn(pos);
+});
+
+// ── ⏮/⏭ trim navigation buttons ──
+document.getElementById('prevGoStart')?.addEventListener('click', () => {
+  if (!prevRawBuf) return;
+  const tS = typeof tsRange !== 'undefined' ? parseFloat(tsRange.value) : 0;
+  prevSeek.value = (tS / prevRawBuf.duration) * 100;
+  prevTime.textContent = fmtTime(tS) + ' / ' + fmtTime(prevRawBuf.duration);
+  prevStop(); prevBuf = null;
+  prevSetStatus('At trim start (' + fmtTime(tS) + ') — tap \u25b6 to preview');
+});
+
+document.getElementById('prevGoEnd')?.addEventListener('click', () => {
+  if (!prevRawBuf) return;
+  const tE = typeof teRange !== 'undefined' ? parseFloat(teRange.value) : prevRawBuf.duration;
+  const pos = Math.max(0, tE - 30);
+  prevSeek.value = (pos / prevRawBuf.duration) * 100;
+  prevTime.textContent = fmtTime(pos) + ' / ' + fmtTime(prevRawBuf.duration);
+  prevStop(); prevBuf = null;
+  prevSetStatus('At trim end \u221230s (' + fmtTime(pos) + ') — tap \u25b6 to preview');
 });
 
 // ── Update file selector when files change ──
@@ -4662,12 +4761,105 @@ async function detectTruePeak(buf) {
   return peak; // linear
 }
 
-// Analyse a single AudioBuffer — returns peak, truePeak, rms, gainNeeded
-async function analyzeBuffer(buf, targetDB, useTruePeak) {
+// ── ITU-R BS.1770 LUFS measurement ──
+// K-weighting filter coefficients at common sample rates
+function getKWeightingCoeffs(sr) {
+  // Stage 1: High-shelf pre-filter
+  // Stage 2: High-pass RLB filter
+  const f0 = 1681.97, Q = 0.7071, Vh = 1.58486, Vb = 1.25872, VL = 1.0;
+  const K  = Math.tan(Math.PI * f0 / sr);
+  const a0 = 1 + K / Q + K * K;
+  const hs = {
+    b0: (Vh + Vb * K / Q + VL * K * K) / a0,
+    b1: 2 * (VL * K * K - Vh) / a0,
+    b2: (Vh - Vb * K / Q + VL * K * K) / a0,
+    a1: 2 * (K * K - 1) / a0,
+    a2: (1 - K / Q + K * K) / a0,
+  };
+  // Stage 2: High-pass at 38.13 Hz
+  const f1 = 38.1355, K2 = Math.tan(Math.PI * f1 / sr);
+  const a02 = 1 + K2 / Q + K2 * K2;
+  const hp = {
+    b0: 1 / a02, b1: -2 / a02, b2: 1 / a02,
+    a1: 2 * (K2 * K2 - 1) / a02,
+    a2: (1 - K2 / Q + K2 * K2) / a02,
+  };
+  return { hs, hp };
+}
+
+function applyBiquad(data, c) {
+  const out = new Float32Array(data.length);
+  let x1=0, x2=0, y1=0, y2=0;
+  for (let i = 0; i < data.length; i++) {
+    const x = data[i];
+    const y = c.b0*x + c.b1*x1 + c.b2*x2 - c.a1*y1 - c.a2*y2;
+    x2=x1; x1=x; y2=y1; y1=y;
+    out[i] = y;
+  }
+  return out;
+}
+
+function measureLUFS(audioBuffer) {
+  const sr    = audioBuffer.sampleRate;
+  const nCh   = audioBuffer.numberOfChannels;
+  const len   = audioBuffer.length;
+  const { hs, hp } = getKWeightingCoeffs(sr);
+
+  // K-weight each channel
+  const weighted = [];
+  for (let c = 0; c < nCh; c++) {
+    let ch = audioBuffer.getChannelData(c).slice();
+    ch = applyBiquad(ch, hs);
+    ch = applyBiquad(ch, hp);
+    weighted.push(ch);
+  }
+
+  // Block size: 400ms with 75% overlap (100ms step)
+  const blockSize = Math.round(sr * 0.4);
+  const stepSize  = Math.round(sr * 0.1);
+  const blocks    = [];
+
+  for (let s = 0; s + blockSize <= len; s += stepSize) {
+    let sumSq = 0;
+    for (let c = 0; c < nCh; c++) {
+      const G = c < 2 ? 1.0 : (c === 2 ? 0 : 1.41); // channel weights: L,R=1, C=1, surround=1.41
+      const ch = weighted[c];
+      for (let i = s; i < s + blockSize; i++) sumSq += G * ch[i] * ch[i];
+    }
+    const meanSq = sumSq / blockSize;
+    blocks.push(meanSq);
+  }
+
+  if (!blocks.length) return { integrated: -Infinity, lra: 0 };
+
+  // Absolute gate: -70 LUFS
+  const absGate   = Math.pow(10, (-70 + 0.691) / 10);
+  const gated1    = blocks.filter(b => b > absGate);
+  if (!gated1.length) return { integrated: -Infinity, lra: 0 };
+
+  // Relative gate: -10 LU below ungated mean
+  const Jg        = gated1.reduce((a,b) => a+b, 0) / gated1.length;
+  const relGate   = Jg * Math.pow(10, -10/10);
+  const gated2    = gated1.filter(b => b > relGate);
+  if (!gated2.length) return { integrated: -Infinity, lra: 0 };
+
+  const Lkg       = -0.691 + 10 * Math.log10(gated2.reduce((a,b) => a+b, 0) / gated2.length);
+
+  // LRA: 10th to 95th percentile of gated blocks
+  const sorted    = [...gated2].sort((a,b) => a-b);
+  const lo        = sorted[Math.floor(sorted.length * 0.10)] || sorted[0];
+  const hi        = sorted[Math.floor(sorted.length * 0.95)] || sorted[sorted.length-1];
+  const Lra       = Math.max(0, (-0.691 + 10*Math.log10(hi)) - (-0.691 + 10*Math.log10(lo)));
+
+  return { integrated: Lkg, lra: Lra };
+}
+
+// Analyse a single AudioBuffer — returns peak, truePeak, rms, lufs, lra, gainNeeded
+async function analyzeBuffer(buf, targetDB, useTruePeak, mode) {
   const numCh = buf.numberOfChannels;
   const len   = buf.length;
 
-  // Sample peak
+  // Sample peak + RMS
   let samplePeak = 0;
   let sumSq = 0, count = 0;
   for (let c = 0; c < numCh; c++) {
@@ -4681,21 +4873,37 @@ async function analyzeBuffer(buf, targetDB, useTruePeak) {
   }
   const rms = Math.sqrt(sumSq / count);
 
-  // True peak (4× oversample) — only if enabled
+  // True peak
   const truePeak = useTruePeak ? await detectTruePeak(buf) : samplePeak;
 
-  // Use true peak as reference when enabled
-  const reference    = useTruePeak ? truePeak : samplePeak;
-  const targetLin    = Math.pow(10, targetDB / 20);
-  const gain         = reference > 1e-6 ? targetLin / reference : 1;
+  // LUFS + LRA (always measure for display, regardless of mode)
+  const { integrated: lufs, lra } = measureLUFS(buf);
 
+  // Reference for gain calculation depends on mode
+  let reference, targetLin;
+  if (mode === 'lufs') {
+    // LUFS mode: gain needed to shift lufs to target
+    const gainDb   = isFinite(lufs) ? targetDB - lufs : 0;
+    const gain     = Math.pow(10, gainDb / 20);
+    const peakDb   = 20 * Math.log10(Math.max(samplePeak, 1e-10));
+    const truePeakDb = 20 * Math.log10(Math.max(truePeak, 1e-10));
+    const rmsDb    = 20 * Math.log10(Math.max(rms, 1e-10));
+    const afterPeakDb = peakDb + gainDb;
+    return { samplePeak, truePeak, rms, peakDb, truePeakDb, rmsDb, gainDb, gain, afterPeakDb, lufs, lra };
+  } else {
+    // Peak / RMS mode
+    reference  = mode === 'rms' ? rms : (useTruePeak ? truePeak : samplePeak);
+    targetLin  = Math.pow(10, targetDB / 20);
+  }
+
+  const gain         = reference > 1e-6 ? targetLin / reference : 1;
   const peakDb       = 20 * Math.log10(Math.max(samplePeak, 1e-10));
   const truePeakDb   = 20 * Math.log10(Math.max(truePeak, 1e-10));
   const rmsDb        = 20 * Math.log10(Math.max(rms, 1e-10));
   const gainDb       = 20 * Math.log10(gain);
   const afterPeakDb  = peakDb + gainDb;
 
-  return { samplePeak, truePeak, rms, peakDb, truePeakDb, rmsDb, gainDb, gain, afterPeakDb };
+  return { samplePeak, truePeak, rms, peakDb, truePeakDb, rmsDb, gainDb, gain, afterPeakDb, lufs, lra };
 }
 
 // Show analysis in the UI for all loaded files
@@ -4717,89 +4925,96 @@ async function runNormAnalysis() {
   try {
     const results = [];
     for (const f of decoded) {
-      const r = await analyzeBuffer(f.decodedBuf, targetDB, useTruePeak);
+      const r = await analyzeBuffer(f.decodedBuf, targetDB, useTruePeak, mode);
       results.push({ name: f.file.name, ...r });
     }
 
-    // Uniform gain — find minimum gain across all files
-    const uniformGain    = Math.min(...results.map(r => r.gain));
-    const uniformGainDb  = 20 * Math.log10(uniformGain);
+    const uniformGain   = Math.min(...results.map(r => r.gain));
+    const uniformGainDb = 20 * Math.log10(uniformGain);
 
-    // Update uniform gain row visibility
     const uniformRow = document.getElementById('uniformGainRow');
     if (uniformRow) uniformRow.style.display = results.length > 1 ? 'flex' : 'none';
 
-    // Build display
-    let html = '';
-    if (results.length === 1) {
-      // Single file — inline detail
-      const r   = results[0];
-      const dr  = r.peakDb - r.rmsDb;
-      const drColor = dr < 6 ? '#c62828' : dr < 12 ? '#e65100' : '#2e7d32';
-      const drDot   = dr < 6 ? '🔴' : dr < 12 ? '🟡' : '🟢';
-      const tpLine  = useTruePeak
-        ? `<br>True peak: <b>${r.truePeakDb.toFixed(1)} dBFS</b>`
-        : '';
-      const safe = r.afterPeakDb <= 0.1;
-      html = `Sample peak: ${r.peakDb.toFixed(1)} dBFS${tpLine}<br>` +
-             `RMS: ${r.rmsDb.toFixed(1)} dBFS<br>` +
-             `Dynamic range: <span style="color:${drColor}">${drDot} ${dr.toFixed(1)} dB</span><br>` +
-             `Gain to apply: <b style="color:var(--blue)">${r.gainDb >= 0 ? '+' : ''}${r.gainDb.toFixed(1)} dB</b><br>` +
-             `After: ${r.afterPeakDb.toFixed(1)} dBFS ` +
-             (safe ? '<span style="color:#2e7d32">✅ No clipping</span>'
-                   : '<span style="color:#c62828">⚠ May clip</span>');
-    } else {
-      // Multiple files — table layout
-      const peakCol = useTruePeak ? 'TRUE PK' : 'PEAK';
-      html = `<table style="width:100%;border-collapse:collapse;font-size:9.5px;">` +
-             `<tr style="color:var(--tx3);border-bottom:1px solid var(--border);">` +
-             `<th style="text-align:left;padding:2px 4px 4px 0;font-weight:600;">FILE</th>` +
-             `<th style="text-align:right;padding:2px 4px;font-weight:600;">${peakCol}</th>` +
-             `<th style="text-align:right;padding:2px 4px;font-weight:600;">RMS</th>` +
-             `<th style="text-align:right;padding:2px 4px;font-weight:600;">GAIN</th>` +
-             `<th style="text-align:right;padding:2px 0 2px 4px;font-weight:600;">DR</th>` +
-             `</tr>`;
-
-      results.forEach(r => {
-        const effectiveGain = normUniformGain ? uniformGainDb : r.gainDb;
-        const peakVal = useTruePeak ? r.truePeakDb : r.peakDb;
-        const dr      = r.peakDb - r.rmsDb;
-        const drDot   = dr < 6 ? '🔴' : dr < 12 ? '🟡' : '🟢';
-        const name    = r.name.length > 18 ? r.name.slice(0, 16) + '…' : r.name;
-        const gainStr = (effectiveGain >= 0 ? '+' : '') + effectiveGain.toFixed(1);
-        const gainColor = effectiveGain > 0 ? 'var(--blue)' : effectiveGain < 0 ? '#c62828' : 'var(--tx3)';
-
-        html += `<tr style="border-bottom:1px solid var(--border);line-height:1.9;">` +
-                `<td style="padding:2px 4px 2px 0;color:var(--tx2);max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}</td>` +
-                `<td style="text-align:right;padding:2px 4px;color:var(--tx);">${peakVal.toFixed(1)}</td>` +
-                `<td style="text-align:right;padding:2px 4px;color:var(--tx3);">${r.rmsDb.toFixed(1)}</td>` +
-                `<td style="text-align:right;padding:2px 4px;color:${gainColor};font-weight:600;">${gainStr}</td>` +
-                `<td style="text-align:right;padding:2px 0 2px 4px;">${drDot} ${dr.toFixed(1)}</td>` +
-                `</tr>`;
-      });
-
-      html += `</table>`;
-
-      // Footer
-      if (normUniformGain) {
-        html += `<div style="margin-top:5px;color:var(--tx3);">` +
-                `Uniform gain: <b style="color:var(--blue)">${uniformGainDb >= 0 ? '+' : ''}${uniformGainDb.toFixed(1)} dB</b>` +
-                ` — limited by loudest file</div>`;
-      }
-
-      // DR legend
-      html += `<div style="margin-top:4px;color:var(--tx3);font-size:9px;">` +
-              `DR: 🟢 >12 dB dynamic &nbsp; 🟡 6–12 dB &nbsp; 🔴 <6 dB compressed</div>`;
+    // Platform compliance helper
+    const PLATFORMS = [
+      { name: 'Spotify',     lufs: -14, icon: '🎵' },
+      { name: 'Apple',       lufs: -16, icon: '🍎' },
+      { name: 'YouTube',     lufs: -14, icon: '▶'  },
+      { name: 'Podcast',     lufs: -16, icon: '🎙'  },
+    ];
+    function platformStatus(lufsAfter) {
+      if (!isFinite(lufsAfter)) return '';
+      return '<span style="font-size:9px;color:var(--tx3);">' +
+        PLATFORMS.map(p => {
+          const ok   = lufsAfter <= p.lufs + 0.5;
+          const diff = (lufsAfter - p.lufs).toFixed(1);
+          return p.icon + ' ' + p.name + ': ' + (ok ? '✅' : '⬇' + (diff > 0 ? '+' : '') + diff + ' LU');
+        }).join('  ') + '</span>';
     }
 
-    // Spotify note
-    if (useTruePeak && targetDB <= -1.0) {
-      html += '<br><span style="color:#1DB954">🎵 Spotify compliant (TP ≤ -1.0 dBFS)</span>';
+    let html = '';
+    if (results.length === 1) {
+      const r        = results[0];
+      const dr       = r.peakDb - r.rmsDb;
+      const drColor  = dr < 6 ? '#c62828' : dr < 12 ? '#e65100' : '#2e7d32';
+      const drDot    = dr < 6 ? '🔴' : dr < 12 ? '🟡' : '🟢';
+      const tpLine   = useTruePeak ? '<br>True peak:  <b>' + r.truePeakDb.toFixed(1) + ' dBFS</b>' : '';
+      const lufsLine = isFinite(r.lufs) ? '<br>Integrated: <b>' + r.lufs.toFixed(1) + ' LUFS</b>' : '';
+      const lraLine  = '<br>LRA:        <b>' + r.lra.toFixed(1) + ' LU</b>';
+      const afterLufs = isFinite(r.lufs) ? (r.lufs + r.gainDb) : NaN;
+      const safe     = r.afterPeakDb <= 0.1;
+
+      html = 'Sample peak: ' + r.peakDb.toFixed(1) + ' dBFS' + tpLine +
+             '<br>RMS:        ' + r.rmsDb.toFixed(1) + ' dBFS' +
+             lufsLine + lraLine +
+             '<br>DR:         <span style="color:' + drColor + '">' + drDot + ' ' + dr.toFixed(1) + ' dB</span>' +
+             '<br>Gain:       <b style="color:var(--blue)">' + (r.gainDb >= 0 ? '+' : '') + r.gainDb.toFixed(1) + ' dB</b>' +
+             '<br>After peak: ' + r.afterPeakDb.toFixed(1) + ' dBFS ' + (safe ? '<span style="color:#2e7d32">✅</span>' : '<span style="color:#c62828">⚠ clip risk</span>') +
+             (isFinite(afterLufs) ? '<br>After LUFS: <b>' + afterLufs.toFixed(1) + ' LUFS</b>' : '') +
+             (isFinite(afterLufs) ? '<br><br>' + platformStatus(afterLufs) : '');
+    } else {
+      const peakCol = useTruePeak ? 'TRUE PK' : 'PEAK';
+      html = '<table style="width:100%;border-collapse:collapse;font-size:9.5px;">' +
+             '<tr style="color:var(--tx3);border-bottom:1px solid var(--border);">' +
+             '<th style="text-align:left;padding:2px 4px 4px 0;font-weight:600;">FILE</th>' +
+             '<th style="text-align:right;padding:2px 4px;font-weight:600;">' + peakCol + '</th>' +
+             '<th style="text-align:right;padding:2px 4px;font-weight:600;">RMS</th>' +
+             '<th style="text-align:right;padding:2px 4px;font-weight:600;">LUFS</th>' +
+             '<th style="text-align:right;padding:2px 4px;font-weight:600;">GAIN</th>' +
+             '<th style="text-align:right;padding:2px 4px;font-weight:600;">DR</th>' +
+             '<th style="text-align:right;padding:2px 0 2px 4px;font-weight:600;">LRA</th>' +
+             '</tr>';
+
+      results.forEach(function(r) {
+        const effectiveGainDb = normUniformGain ? uniformGainDb : r.gainDb;
+        const peakVal    = (useTruePeak ? r.truePeakDb : r.peakDb).toFixed(1);
+        const dr         = r.peakDb - r.rmsDb;
+        const drDot      = dr < 6 ? '🔴' : dr < 12 ? '🟡' : '🟢';
+        const name       = r.name.length > 14 ? r.name.slice(0, 12) + '…' : r.name;
+        const gainStr    = (effectiveGainDb >= 0 ? '+' : '') + effectiveGainDb.toFixed(1);
+        const gainColor  = effectiveGainDb > 0 ? 'var(--blue)' : effectiveGainDb < -0.1 ? '#c62828' : 'var(--tx3)';
+        const lufsStr    = isFinite(r.lufs) ? r.lufs.toFixed(1) : '—';
+
+        html += '<tr style="border-bottom:1px solid var(--border);line-height:1.9;">' +
+                '<td style="padding:2px 4px 2px 0;color:var(--tx2);max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + name + '</td>' +
+                '<td style="text-align:right;padding:2px 4px;">' + peakVal + '</td>' +
+                '<td style="text-align:right;padding:2px 4px;color:var(--tx3);">' + r.rmsDb.toFixed(1) + '</td>' +
+                '<td style="text-align:right;padding:2px 4px;">' + lufsStr + '</td>' +
+                '<td style="text-align:right;padding:2px 4px;color:' + gainColor + ';font-weight:600;">' + gainStr + '</td>' +
+                '<td style="text-align:right;padding:2px 4px;">' + drDot + ' ' + dr.toFixed(1) + '</td>' +
+                '<td style="text-align:right;padding:2px 0 2px 4px;color:var(--tx3);">' + r.lra.toFixed(1) + '</td>' +
+                '</tr>';
+      });
+
+      html += '</table>';
+      if (normUniformGain) {
+        html += '<div style="margin-top:5px;color:var(--tx3);">Uniform gain: <b style="color:var(--blue)">' +
+                (uniformGainDb >= 0 ? '+' : '') + uniformGainDb.toFixed(1) + ' dB</b> — limited by loudest file</div>';
+      }
+      html += '<div style="margin-top:4px;color:var(--tx3);font-size:9px;">DR: 🟢>12 dB  🟡6-12  🔴<6 compressed | LRA in LU</div>';
     }
 
     analysisEl.innerHTML = html;
-
-    // Store uniform gain for use in convert
     window._normUniformGainDb = uniformGainDb;
     window._normUniformGain   = uniformGain;
 
@@ -4814,8 +5029,18 @@ function normalizeBuf(buf, mode, targetDB, uniformGainLin) {
   let gain;
 
   if (uniformGainLin != null) {
-    // Uniform gain across batch — gain pre-calculated
     gain = uniformGainLin;
+  } else if (mode === 'lufs') {
+    // LUFS mode — measure integrated loudness synchronously (approximate, full measurement async)
+    // Use RMS as proxy for quick gain estimate, actual LUFS calculated in analyzeBuffer
+    const targetLin = Math.pow(10, targetDB / 20);
+    let rms = 0, count = 0;
+    for (let c = 0; c < numCh; c++) {
+      const ch = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) { rms += ch[i] * ch[i]; count++; }
+    }
+    rms = Math.sqrt(rms / count);
+    gain = rms > 1e-6 ? targetLin / rms : 1;
   } else {
     const targetLin = Math.pow(10, targetDB / 20);
     let level = 0;
@@ -4833,7 +5058,6 @@ function normalizeBuf(buf, mode, targetDB, uniformGainLin) {
     gain = targetLin / level;
   }
 
-  // Apply gain — clamp to [-1, 1]
   const out = new AudioBuffer({ numberOfChannels: numCh, length: len, sampleRate: buf.sampleRate });
   for (let c = 0; c < numCh; c++) {
     const src = buf.getChannelData(c), dst = out.getChannelData(c);
@@ -5533,6 +5757,21 @@ function setAbMode(mode) {
 abBtnA.addEventListener('click', () => setAbMode('A'));
 abBtnB.addEventListener('click', () => setAbMode('B'));
 
+// ── Trim page ⏮/⏭ navigation ──
+document.getElementById('goTrimStart')?.addEventListener('click', () => {
+  if (!previewBuf) return;
+  const tS = parseFloat(tsRange.value);
+  seekSl.value = tS; updatePH(tS);
+  if (isPlaying) { stopPlay(); startPlay(tS); }
+});
+document.getElementById('goTrimEnd')?.addEventListener('click', () => {
+  if (!previewBuf) return;
+  const tE  = parseFloat(teRange.value);
+  const pos = Math.max(0, tE - 30);
+  seekSl.value = pos; updatePH(pos);
+  if (isPlaying) { stopPlay(); startPlay(pos); }
+});
+
 // ════════════════════════════════════════════════════
 //  PINCH-TO-ZOOM on waveform
 //  - Two fingers: pinch to zoom (continuous)
@@ -5642,8 +5881,10 @@ function makeFadeSliderTouch(slider, enabledCheckbox, wrapEl, valLabel, onUpdate
     const dx      = e.touches[0].clientX - startX;
     const sliderW = slider.getBoundingClientRect().width || 200;
     const newVal  = Math.max(0, Math.min(MAX, startVal + (dx / sliderW) * MAX));
-    slider.value  = newVal.toFixed(1);
-    valLabel.textContent = newVal.toFixed(1) + 's';
+    slider.value  = newVal.toFixed(2);
+    if (valLabel) valLabel.textContent = newVal.toFixed(2) + 's';
+    const inp = wrapEl?.previousElementSibling?.querySelector?.('input.fade-input');
+    if (inp) inp.value = newVal.toFixed(2);
     onUpdate();
   }, { passive: false });
 
