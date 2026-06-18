@@ -3317,10 +3317,19 @@ convertBtn.addEventListener('click', async () => {
     // Fade
     buf = applyFadeIfNeeded(buf);
 
-    // Normalize (main thread only for WebCodecs formats)
+    // Normalize — use exact gain from analyzeBuffer (LUFS-accurate, not RMS proxy)
     if (doNorm && !canUseWorker(fmt)) {
       const _uGain = normUniformGain && window._normUniformGain != null ? window._normUniformGain : null;
-      buf = normalizeBuf(buf, normModeVal, normTargetVal, _uGain);
+      if (_uGain != null) {
+        // Uniform gain across batch — use pre-calculated value
+        buf = normalizeBuf(buf, normModeVal, normTargetVal, _uGain);
+      } else {
+        // Per-file: calculate exact gain using analyzeBuffer (handles LUFS + true peak correctly)
+        setItemProgress(item.id, 52, 'Analysing loudness…');
+        const useTruePeak = document.getElementById('truePeakEnabled')?.checked || false;
+        const analysis = await analyzeBuffer(buf, normTargetVal, useTruePeak, normModeVal);
+        buf = normalizeBuf(buf, normModeVal, normTargetVal, analysis.gain);
+      }
     }
 
     return buf;
@@ -3332,9 +3341,21 @@ convertBtn.addEventListener('click', async () => {
     ts('Encode start (' + fmt + ')');
     if (canUseWorker(fmt)) {
       setItemProgress(item.id, 18, 'Queued for encoding…');
+      // Pre-calculate exact normalization gain (LUFS-accurate) before sending to worker
+      let exactNormGain = null;
+      if (doNorm) {
+        if (normUniformGain && window._normUniformGain != null) {
+          exactNormGain = window._normUniformGain;
+        } else {
+          const useTruePeak = document.getElementById('truePeakEnabled')?.checked || false;
+          const analysis = await analyzeBuffer(buf, normTargetVal, useTruePeak, normModeVal);
+          exactNormGain = analysis.gain;
+        }
+      }
       const result = await runInWorker({
         audioBuf: buf, itemId: item.id, fmt, bitrate: br,
-        semitones, doNorm, normMode: normModeVal, normTarget: normTargetVal, normUniform: normUniformGain, normUniformGainLin: (normUniformGain && window._normUniformGain != null ? window._normUniformGain : null),
+        semitones, doNorm, normMode: normModeVal, normTarget: normTargetVal,
+        normUniform: doNorm, normUniformGainLin: exactNormGain,
       });
       const mime = fmt==='mp3'?'audio/mpeg':fmt==='flac'?'audio/flac':'audio/wav';
       blob = new Blob([result.outBytes], { type: mime });
@@ -4246,6 +4267,7 @@ function runInWorker(payload) {
       sr: payload.audioBuf.sampleRate, fmt: payload.fmt,
       bitrate: payload.bitrate, semitones: payload.semitones,
       doNorm: payload.doNorm, normMode: payload.normMode, normTarget: payload.normTarget,
+      normUniform: payload.normUniform, normUniformGainLin: payload.normUniformGainLin,
     }, transfers);
   });
 }
@@ -4879,31 +4901,51 @@ async function analyzeBuffer(buf, targetDB, useTruePeak, mode) {
   // LUFS + LRA (always measure for display, regardless of mode)
   const { integrated: lufs, lra } = measureLUFS(buf);
 
+  // True peak limit value (from UI, default -1.0 dBFS)
+  const tpLimitEl  = document.getElementById('truePeakTarget');
+  const tpLimitDb  = useTruePeak ? (parseFloat(tpLimitEl?.value) || -1.0) : Infinity;
+  const tpLimitLin = useTruePeak ? Math.pow(10, tpLimitDb / 20) : Infinity;
+
   // Reference for gain calculation depends on mode
   let reference, targetLin;
   if (mode === 'lufs') {
-    // LUFS mode: gain needed to shift lufs to target
     const gainDb   = isFinite(lufs) ? targetDB - lufs : 0;
-    const gain     = Math.pow(10, gainDb / 20);
-    const peakDb   = 20 * Math.log10(Math.max(samplePeak, 1e-10));
-    const truePeakDb = 20 * Math.log10(Math.max(truePeak, 1e-10));
-    const rmsDb    = 20 * Math.log10(Math.max(rms, 1e-10));
-    const afterPeakDb = peakDb + gainDb;
-    return { samplePeak, truePeak, rms, peakDb, truePeakDb, rmsDb, gainDb, gain, afterPeakDb, lufs, lra };
+    let   gain     = Math.pow(10, gainDb / 20);
+
+    // Apply true peak limit — if gain would push true peak above limit, reduce it
+    if (useTruePeak && truePeak * gain > tpLimitLin) {
+      gain = tpLimitLin / truePeak;
+    }
+
+    const finalGainDb  = 20 * Math.log10(gain);
+    const peakDb       = 20 * Math.log10(Math.max(samplePeak, 1e-10));
+    const truePeakDb   = 20 * Math.log10(Math.max(truePeak, 1e-10));
+    const rmsDb        = 20 * Math.log10(Math.max(rms, 1e-10));
+    const afterPeakDb  = peakDb + finalGainDb;
+    const tpLimited    = useTruePeak && (truePeak * Math.pow(10, gainDb/20)) > tpLimitLin;
+    return { samplePeak, truePeak, rms, peakDb, truePeakDb, rmsDb,
+             gainDb: finalGainDb, gain, afterPeakDb, lufs, lra, tpLimited };
   } else {
     // Peak / RMS mode
     reference  = mode === 'rms' ? rms : (useTruePeak ? truePeak : samplePeak);
     targetLin  = Math.pow(10, targetDB / 20);
   }
 
-  const gain         = reference > 1e-6 ? targetLin / reference : 1;
+  let gain = reference > 1e-6 ? targetLin / reference : 1;
+
+  // Apply true peak limit — if gain would push true peak above limit, reduce it
+  const tpLimited = useTruePeak && (truePeak * gain > tpLimitLin);
+  if (tpLimited) {
+    gain = tpLimitLin / truePeak;
+  }
+
   const peakDb       = 20 * Math.log10(Math.max(samplePeak, 1e-10));
   const truePeakDb   = 20 * Math.log10(Math.max(truePeak, 1e-10));
   const rmsDb        = 20 * Math.log10(Math.max(rms, 1e-10));
   const gainDb       = 20 * Math.log10(gain);
   const afterPeakDb  = peakDb + gainDb;
 
-  return { samplePeak, truePeak, rms, peakDb, truePeakDb, rmsDb, gainDb, gain, afterPeakDb, lufs, lra };
+  return { samplePeak, truePeak, rms, peakDb, truePeakDb, rmsDb, gainDb, gain, afterPeakDb, lufs, lra, tpLimited };
 }
 
 // Show analysis in the UI for all loaded files
@@ -4969,6 +5011,7 @@ async function runNormAnalysis() {
              lufsLine + lraLine +
              '<br>DR:         <span style="color:' + drColor + '">' + drDot + ' ' + dr.toFixed(1) + ' dB</span>' +
              '<br>Gain:       <b style="color:var(--blue)">' + (r.gainDb >= 0 ? '+' : '') + r.gainDb.toFixed(1) + ' dB</b>' +
+             (r.tpLimited ? ' <span style="color:#e65100">⚠ true peak limit applied</span>' : '') +
              '<br>After peak: ' + r.afterPeakDb.toFixed(1) + ' dBFS ' + (safe ? '<span style="color:#2e7d32">✅</span>' : '<span style="color:#c62828">⚠ clip risk</span>') +
              (isFinite(afterLufs) ? '<br>After LUFS: <b>' + afterLufs.toFixed(1) + ' LUFS</b>' : '') +
              (isFinite(afterLufs) ? '<br><br>' + platformStatus(afterLufs) : '');
@@ -5026,13 +5069,17 @@ async function runNormAnalysis() {
 
 function normalizeBuf(buf, mode, targetDB, uniformGainLin) {
   const numCh = buf.numberOfChannels, len = buf.length;
-  let gain;
 
+  // True peak limit from UI
+  const tpEnabled = document.getElementById('truePeakEnabled')?.checked || false;
+  const tpLimitDb = tpEnabled ? (parseFloat(document.getElementById('truePeakTarget')?.value) || -1.0) : Infinity;
+  const tpLimitLin = isFinite(tpLimitDb) ? Math.pow(10, tpLimitDb / 20) : Infinity;
+
+  let gain;
   if (uniformGainLin != null) {
     gain = uniformGainLin;
   } else if (mode === 'lufs') {
-    // LUFS mode — measure integrated loudness synchronously (approximate, full measurement async)
-    // Use RMS as proxy for quick gain estimate, actual LUFS calculated in analyzeBuffer
+    // LUFS mode — use RMS as proxy (full LUFS is async, done in analyzeBuffer)
     const targetLin = Math.pow(10, targetDB / 20);
     let rms = 0, count = 0;
     for (let c = 0; c < numCh; c++) {
@@ -5056,6 +5103,19 @@ function normalizeBuf(buf, mode, targetDB, uniformGainLin) {
     }
     if (level < 1e-6) return buf;
     gain = targetLin / level;
+  }
+
+  // Apply true peak limit — find sample peak after gain, clamp if needed
+  if (isFinite(tpLimitLin)) {
+    let samplePeak = 0;
+    for (let c = 0; c < numCh; c++) {
+      const ch = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) { const v = Math.abs(ch[i]); if (v > samplePeak) samplePeak = v; }
+    }
+    // Use sample peak as proxy for true peak (conservative)
+    if (samplePeak * gain > tpLimitLin) {
+      gain = tpLimitLin / samplePeak;
+    }
   }
 
   const out = new AudioBuffer({ numberOfChannels: numCh, length: len, sampleRate: buf.sampleRate });
