@@ -1053,6 +1053,10 @@ const _Cap     = window.Capacitor?.Plugins || {};
 console.log('[init] isNative:', isNative, 'Capacitor:', !!window.Capacitor, 'plugins:', Object.keys(_Cap).join(', '));console.log('[init] isNative:', isNative, 'Capacitor:', !!window.Capacitor, 'plugins:', Object.keys(_Cap).join(', '));
 
 // ── FFmpeg native converter ──
+// Register custom native plugin so it appears in window.Capacitor.Plugins
+if (window.Capacitor?.registerPlugin) {
+  window.Capacitor.registerPlugin('FFmpegConverter');
+}
 const _FFmpeg = _Cap.FFmpegConverter || null;
 console.log('[init] FFmpegConverter available:', !!_FFmpeg);
 
