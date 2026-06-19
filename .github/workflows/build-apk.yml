@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
@@ -35,8 +35,6 @@ jobs:
         run: |
           mkdir -p www/plugins
           cp node_modules/capacitor-blob-writer/dist/plugin.js www/plugins/blob-writer.js || echo "blob-writer copy failed"
-          echo "www/plugins contents:"
-          ls -la www/plugins/ 2>/dev/null || echo "plugins dir empty"
 
       - name: Add Android platform
         run: npx cap add android
@@ -54,6 +52,45 @@ jobs:
       - name: Register ForegroundService in AndroidManifest
         run: |
           sed -i 's|</application>|    <service\n        android:name="io.capawesome.capacitorjs.plugins.foregroundservice.AndroidForegroundService"\n        android:foregroundServiceType="dataSync"\n        android:exported="false" />\n    </application>|' android/app/src/main/AndroidManifest.xml
+
+      - name: Add ffmpeg-kit-android dependency
+        run: |
+          # Add ffmpeg-kit-android-audio to app/build.gradle
+          sed -i '/dependencies {/a\    implementation("com.arthenica:ffmpeg-kit-android-audio:6.0-2")' android/app/build.gradle
+          echo "=== app/build.gradle dependencies ==="
+          grep -A 5 "dependencies {" android/app/build.gradle | head -10
+
+      - name: Add ffmpeg-kit maven repository
+        run: |
+          # Add maven repo for ffmpeg-kit to project-level build.gradle
+          sed -i '/repositories {/a\        maven { url "https://jitpack.io" }' android/build.gradle || true
+          # Also try settings.gradle if it exists
+          if [ -f android/settings.gradle ]; then
+            sed -i '/repositories {/a\        maven { url "https://jitpack.io" }' android/settings.gradle || true
+          fi
+
+      - name: Copy FFmpegPlugin.kt into Android project
+        run: |
+          PLUGIN_DIR="android/app/src/main/java/com/audioshiftpro/app"
+          mkdir -p "$PLUGIN_DIR"
+          cp android-src/FFmpegPlugin/FFmpegPlugin.kt "$PLUGIN_DIR/"
+          echo "✅ FFmpegPlugin.kt copied to $PLUGIN_DIR"
+          ls -la "$PLUGIN_DIR/"
+
+      - name: Register FFmpegPlugin in MainActivity
+        run: |
+          MAIN="android/app/src/main/java/com/audioshiftpro/app/MainActivity.kt"
+          if [ -f "$MAIN" ]; then
+            # Add import
+            sed -i '/^package /a import com.audioshiftpro.app.FFmpegPlugin' "$MAIN"
+            # Register plugin in onCreate or init block
+            sed -i 's/class MainActivity : BridgeActivity() {/class MainActivity : BridgeActivity() {\n  override fun onCreate(savedInstanceState: android.os.Bundle?) {\n    registerPlugin(FFmpegPlugin::class.java)\n    super.onCreate(savedInstanceState)\n  }/' "$MAIN"
+            echo "=== MainActivity.kt ==="
+            cat "$MAIN"
+          else
+            echo "❌ MainActivity.kt not found at $MAIN"
+            find android -name "MainActivity.kt" 2>/dev/null
+          fi
 
       - name: Sync Capacitor
         run: npx cap sync android
@@ -99,7 +136,6 @@ jobs:
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           BUILD_NUM="${{ github.run_number }}"
           DATE=$(date '+%d %b %Y %H:%M UTC')
-          
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
             -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
             -F document=@"$APK" \
