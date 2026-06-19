@@ -53,42 +53,51 @@ jobs:
         run: |
           sed -i 's|</application>|    <service\n        android:name="io.capawesome.capacitorjs.plugins.foregroundservice.AndroidForegroundService"\n        android:foregroundServiceType="dataSync"\n        android:exported="false" />\n    </application>|' android/app/src/main/AndroidManifest.xml
 
-      - name: Add ffmpeg-kit-android dependency
-        run: |
-          # Add ffmpeg-kit-android-audio to app/build.gradle
-          sed -i '/dependencies {/a\    implementation("com.arthenica:ffmpeg-kit-android-audio:6.0-2")' android/app/build.gradle
-          echo "=== app/build.gradle dependencies ==="
-          grep -A 5 "dependencies {" android/app/build.gradle | head -10
 
-      - name: Add ffmpeg-kit maven repository
         run: |
-          # Add maven repo for ffmpeg-kit to project-level build.gradle
-          sed -i '/repositories {/a\        maven { url "https://jitpack.io" }' android/build.gradle || true
-          # Also try settings.gradle if it exists
-          if [ -f android/settings.gradle ]; then
-            sed -i '/repositories {/a\        maven { url "https://jitpack.io" }' android/settings.gradle || true
-          fi
+          # ffmpeg-kit retired Jan 2025 — download AAR directly from GitHub releases
+          mkdir -p android/app/libs
+          echo "Downloading ffmpeg-kit-android-audio AAR..."
+          curl -L -o android/app/libs/ffmpeg-kit-android-audio.aar \
+            "https://github.com/arthenica/ffmpeg-kit/releases/download/v6.0/ffmpeg-kit-audio-6.0-android.aar"
+          ls -lah android/app/libs/
+
+      - name: Add ffmpeg-kit as local AAR dependency
+        run: |
+          # Add local libs dir and AAR dependency to app/build.gradle
+          # First add flatDir for local libs
+          sed -i '/android {/i repositories {\n    flatDir { dirs "libs" }\n}' android/app/build.gradle || true
+          # Add AAR dependency
+          sed -i '/dependencies {/a\    implementation(name: "ffmpeg-kit-android-audio", ext: "aar")' android/app/build.gradle
+          # Add required ffmpeg-kit dependencies
+          sed -i '/dependencies {/a\    implementation("com.arthenica:smart-exception-java:0.2.1")' android/app/build.gradle
+          echo "=== app/build.gradle ==="
+          head -60 android/app/build.gradle
+
+      - name: Add ffmpeg-kit community fork dependency
+        run: |
+          # ffmpeg-kit retired Apr 2025 — use community fork on Maven Central
+          sed -i '/dependencies {/a\    implementation("com.moizhassan.ffmpeg:ffmpeg-kit-16kb:6.1.1")' android/app/build.gradle
+          echo "✅ ffmpeg-kit-16kb added"
 
       - name: Copy FFmpegPlugin.kt into Android project
         run: |
           PLUGIN_DIR="android/app/src/main/java/com/audioshiftpro/app"
           mkdir -p "$PLUGIN_DIR"
           cp android-src/FFmpegPlugin/FFmpegPlugin.kt "$PLUGIN_DIR/"
-          echo "✅ FFmpegPlugin.kt copied to $PLUGIN_DIR"
+          echo "✅ FFmpegPlugin.kt copied"
           ls -la "$PLUGIN_DIR/"
 
       - name: Register FFmpegPlugin in MainActivity
         run: |
           MAIN="android/app/src/main/java/com/audioshiftpro/app/MainActivity.kt"
           if [ -f "$MAIN" ]; then
-            # Add import
             sed -i '/^package /a import com.audioshiftpro.app.FFmpegPlugin' "$MAIN"
-            # Register plugin in onCreate or init block
             sed -i 's/class MainActivity : BridgeActivity() {/class MainActivity : BridgeActivity() {\n  override fun onCreate(savedInstanceState: android.os.Bundle?) {\n    registerPlugin(FFmpegPlugin::class.java)\n    super.onCreate(savedInstanceState)\n  }/' "$MAIN"
             echo "=== MainActivity.kt ==="
             cat "$MAIN"
           else
-            echo "❌ MainActivity.kt not found at $MAIN"
+            echo "❌ MainActivity.kt not found"
             find android -name "MainActivity.kt" 2>/dev/null
           fi
 
