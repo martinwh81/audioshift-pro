@@ -1050,7 +1050,80 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 // ── isNative must be declared first — used throughout ──
 const isNative = !!(window.Capacitor?.isNativePlatform?.());
 const _Cap     = window.Capacitor?.Plugins || {};
-console.log('[init] isNative:', isNative, 'Capacitor:', !!window.Capacitor, 'plugins:', Object.keys(_Cap).join(', '));
+console.log('[init] isNative:', isNative, 'Capacitor:', !!window.Capacitor, 'plugins:', Object.keys(_Cap).join(', '));console.log('[init] isNative:', isNative, 'Capacitor:', !!window.Capacitor, 'plugins:', Object.keys(_Cap).join(', '));
+
+// ── FFmpeg native converter ──
+const _FFmpeg = _Cap.FFmpegConverter || null;
+console.log('[init] FFmpegConverter available:', !!_FFmpeg);
+
+// Build FFmpeg command from current settings
+function buildFFmpegCommand(inputPath, outputPath, settings) {
+  const filters = [];
+  const { semitones, speed, doNorm, normMode, normTarget, tpLimit,
+          trimStart, trimEnd, fadeIn, fadeOut, bitrate, sampleRate } = settings;
+
+  // Trim args (input-side seek — fastest method)
+  const ssArg = trimStart > 0 ? '-ss ' + trimStart.toFixed(3) : '';
+  const toArg = (trimEnd > 0 && trimEnd < 9999) ? '-to ' + trimEnd.toFixed(3) : '';
+
+  // Speed (atempo only supports 0.5-2.0, chain for larger values)
+  if (Math.abs(speed - 1.0) > 0.01) {
+    let s = speed;
+    while (s > 2.0) { filters.push('atempo=2.0'); s /= 2.0; }
+    while (s < 0.5) { filters.push('atempo=0.5'); s *= 2.0; }
+    filters.push('atempo=' + s.toFixed(4));
+  }
+
+  // Pitch shift (rubberband — high quality)
+  if (semitones !== 0) {
+    const ratio = Math.pow(2, semitones / 12);
+    filters.push('rubberband=pitch=' + ratio.toFixed(6));
+  }
+
+  // Fade in/out
+  const dur = (trimEnd > 0 && trimEnd < 9999) ? trimEnd - trimStart : null;
+  if (fadeIn > 0)  filters.push('afade=t=in:st=0:d=' + fadeIn);
+  if (fadeOut > 0 && dur) filters.push('afade=t=out:st=' + (dur - fadeOut).toFixed(3) + ':d=' + fadeOut);
+
+  // Normalize (FFmpeg loudnorm = true ITU-R BS.1770)
+  if (doNorm) {
+    if (normMode === 'lufs') {
+      filters.push('loudnorm=I=' + normTarget + ':TP=' + (tpLimit || -1.0) + ':LRA=11');
+    } else if (normMode === 'peak') {
+      // Use dynaudnorm for peak normalization
+      filters.push('dynaudnorm=p=1.0:m=100:s=0:g=15');
+    } else {
+      // RMS — use volume filter after measuring
+      filters.push('loudnorm=I=' + normTarget + ':TP=' + (tpLimit || -1.0));
+    }
+  }
+
+  const afArg = filters.length ? '-af "' + filters.join(',') + '"' : '';
+
+  // Sample rate
+  const arArg = (sampleRate && sampleRate > 0) ? '-ar ' + sampleRate : '';
+
+  // Bitrate
+  const baArg = bitrate ? '-b:a ' + bitrate + 'k' : '-b:a 320k';
+
+  const cmd = [
+    '-i "' + inputPath + '"',
+    ssArg, toArg,
+    afArg, arArg, baArg,
+    '-y "' + outputPath + '"',
+  ].filter(Boolean).join(' ');
+
+  console.log('[FFmpeg] command:', cmd);
+  return cmd;
+}
+
+// Get native file path from file object
+// On Android, file:// URIs can be used directly by FFmpeg
+function getNativePath(file) {
+  // For files loaded via input[type=file], we need to use Filesystem to copy first
+  // or use the webPath if available
+  return file._nativePath || null;
+}
 
 // Show loading indicator immediately so screen is never blank
 document.addEventListener('DOMContentLoaded', () => {
@@ -3335,10 +3408,89 @@ convertBtn.addEventListener('click', async () => {
     return buf;
   }
 
-  // Helper: encode one file — Worker or WebCodecs
+  // Helper: encode one file — FFmpeg (native) or Worker/WebCodecs (browser)
   async function encodeFile(item, buf, ts) {
     let blob;
     ts('Encode start (' + fmt + ')');
+
+    // ── FFmpeg native path (APK only) ──
+    if (isNative && _FFmpeg) {
+      ts('Encode via FFmpeg (native)');
+      setItemProgress(item.id, 20, 'Converting (FFmpeg)…');
+
+      try {
+        // Write input to cache using existing pipeline
+        const NativeFS = _Cap.Filesystem;
+        if (!NativeFS) throw new Error('Filesystem plugin missing');
+
+        const safeName   = item.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const inputPath  = await (async () => {
+          // Write decoded audio back to a temp file — or use original file URI
+          // Best: use original file if we have a native URI
+          if (item._nativeUri) return item._nativeUri.replace('file://', '');
+          // Fallback: write raw file to cache
+          const inUri  = await writeBlobToCache(safeName, item.file);
+          return inUri ? inUri.replace('file://', '') : null;
+        })();
+
+        if (!inputPath) throw new Error('Could not get input path');
+
+        // Output path in Documents/AudioShiftPro/
+        const outExt   = item._extOverride || fmt;
+        const outName  = (savePrefix.value || '') + item.file.name.replace(/\.[^.]+$/, '') + '.' + outExt;
+        const outPath  = '/data/user/0/com.audioshiftpro.app/files/AudioShiftPro/' + outName.replace(/[^a-zA-Z0-9._() -]/g, '_');
+
+        // Build FFmpeg command with all settings
+        const trimS = item.trimS || 0;
+        const trimE = item.trimE || 0;
+        const fiSec = fadeInEnabled.checked  ? parseFloat(fadeInRange.value)  : 0;
+        const foSec = fadeOutEnabled.checked ? parseFloat(fadeOutRange.value) : 0;
+        const tpEl  = document.getElementById('truePeakTarget');
+
+        const cmd = buildFFmpegCommand(inputPath, outPath, {
+          semitones:  getPitch(),
+          speed:      getSpeed(),
+          doNorm:     normEnabled.checked,
+          normMode:   normMode || 'peak',
+          normTarget: parseFloat(normTarget?.value) || -14,
+          tpLimit:    parseFloat(tpEl?.value) || -1.0,
+          trimStart:  trimS,
+          trimEnd:    trimE > 0 ? trimE : 0,
+          fadeIn:     fiSec,
+          fadeOut:    foSec,
+          bitrate:    br,
+          sampleRate: parseInt(document.getElementById('sampleRate')?.value) || 0,
+        });
+
+        // Progress listener
+        const progressHandler = (event) => {
+          const pct = Math.min(94, 20 + Math.round((event.time / (buf.duration * 1000)) * 74));
+          setItemProgress(item.id, pct, 'FFmpeg ' + (event.speed || '').toFixed(1) + 'x…');
+        };
+        _FFmpeg.addListener('ffmpegProgress', progressHandler);
+
+        const result = await _FFmpeg.convert({ command: cmd });
+        _FFmpeg.removeAllListeners('ffmpegProgress');
+
+        if (!result.success) {
+          console.error('[FFmpeg] failed:', result.error);
+          throw new Error('FFmpeg: ' + result.error);
+        }
+
+        ts('FFmpeg encode done → ' + outPath);
+        setItemProgress(item.id, 95, '✅ Converted');
+
+        // File already saved to Documents — return a marker blob so finalize knows
+        item._ffmpegOutputPath = outPath;
+        item.outName = outName;
+        return new Blob([], { type: 'audio/mpeg' }); // marker — file is on disk
+
+      } catch(e) {
+        console.error('[FFmpeg] error, falling back to JS:', e.message);
+        ts('FFmpeg failed — falling back to JS encoder');
+        // Fall through to JS encoding below
+      }
+    }
     if (canUseWorker(fmt)) {
       setItemProgress(item.id, 18, 'Queued for encoding…');
       // Pre-calculate exact normalization gain (LUFS-accurate) before sending to worker
@@ -3378,6 +3530,15 @@ convertBtn.addEventListener('click', async () => {
 
   // Helper: finalize one file after encoding (embed meta, save to folder)
   async function finalizeFile(item, blob) {
+    // If FFmpeg already saved the file to disk, just update UI
+    if (item._ffmpegOutputPath) {
+      item.status = 'done';
+      item.blob   = blob; // marker blob
+      updateFileItem(item.id);
+      setItemProgress(item.id, 100, '✅ Saved by FFmpeg');
+      done++;
+      return;
+    }
     const metaToEmbed = item.meta || {};
     const hasMeta = Object.entries(metaToEmbed).some(([k,v]) => k !== '_source' && v);
     if (hasMeta) {
