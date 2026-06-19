@@ -1,8 +1,5 @@
 package com.audioshiftpro.app
 
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.core.content.ContextCompat
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.ReturnCode
@@ -18,8 +15,6 @@ import kotlinx.coroutines.launch
 @CapacitorPlugin(name = "FFmpegConverter")
 class FFmpegPlugin : Plugin() {
 
-    private var progressCall: PluginCall? = null
-
     @PluginMethod
     fun convert(call: PluginCall) {
         val command = call.getString("command")
@@ -30,13 +25,10 @@ class FFmpegPlugin : Plugin() {
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Enable statistics for progress tracking
                 FFmpegKitConfig.enableStatisticsCallback { stats ->
-                    val pct = stats.time  // milliseconds processed
                     notifyListeners("ffmpegProgress", JSObject().apply {
-                        put("time", pct)
+                        put("time", stats.time)
                         put("size", stats.size)
-                        put("bitrate", stats.bitrate)
                         put("speed", stats.speed)
                     })
                 }
@@ -44,16 +36,19 @@ class FFmpegPlugin : Plugin() {
                 val session = FFmpegKit.execute(command)
                 val ret = JSObject()
 
-                if (ReturnCode.isSuccess(session.returnCode)) {
-                    ret.put("success", true)
-                    ret.put("returnCode", 0)
-                } else if (ReturnCode.isCancel(session.returnCode)) {
-                    ret.put("success", false)
-                    ret.put("error", "Cancelled")
-                } else {
-                    ret.put("success", false)
-                    ret.put("error", session.failStackTrace ?: "FFmpeg failed with rc=${session.returnCode}")
-                    ret.put("logs", session.allLogsAsString)
+                when {
+                    ReturnCode.isSuccess(session.returnCode) -> {
+                        ret.put("success", true)
+                    }
+                    ReturnCode.isCancel(session.returnCode) -> {
+                        ret.put("success", false)
+                        ret.put("error", "Cancelled")
+                    }
+                    else -> {
+                        ret.put("success", false)
+                        ret.put("error", session.failStackTrace ?: "FFmpeg failed rc=${session.returnCode}")
+                        ret.put("logs", session.allLogsAsString)
+                    }
                 }
                 call.resolve(ret)
             } catch (e: Exception) {
@@ -66,12 +61,5 @@ class FFmpegPlugin : Plugin() {
     fun cancel(call: PluginCall) {
         FFmpegKit.cancel()
         call.resolve()
-    }
-
-    @PluginMethod
-    fun getVersion(call: PluginCall) {
-        val ret = JSObject()
-        ret.put("version", com.arthenica.ffmpegkit.BuildConfig.VERSION)
-        call.resolve(ret)
     }
 }
