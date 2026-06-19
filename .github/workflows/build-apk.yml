@@ -53,32 +53,13 @@ jobs:
         run: |
           sed -i 's|</application>|    <service\n        android:name="io.capawesome.capacitorjs.plugins.foregroundservice.AndroidForegroundService"\n        android:foregroundServiceType="dataSync"\n        android:exported="false" />\n    </application>|' android/app/src/main/AndroidManifest.xml
 
-
-        run: |
-          # ffmpeg-kit retired Jan 2025 — download AAR directly from GitHub releases
-          mkdir -p android/app/libs
-          echo "Downloading ffmpeg-kit-android-audio AAR..."
-          curl -L -o android/app/libs/ffmpeg-kit-android-audio.aar \
-            "https://github.com/arthenica/ffmpeg-kit/releases/download/v6.0/ffmpeg-kit-audio-6.0-android.aar"
-          ls -lah android/app/libs/
-
-      - name: Add ffmpeg-kit as local AAR dependency
-        run: |
-          # Add local libs dir and AAR dependency to app/build.gradle
-          # First add flatDir for local libs
-          sed -i '/android {/i repositories {\n    flatDir { dirs "libs" }\n}' android/app/build.gradle || true
-          # Add AAR dependency
-          sed -i '/dependencies {/a\    implementation(name: "ffmpeg-kit-android-audio", ext: "aar")' android/app/build.gradle
-          # Add required ffmpeg-kit dependencies
-          sed -i '/dependencies {/a\    implementation("com.arthenica:smart-exception-java:0.2.1")' android/app/build.gradle
-          echo "=== app/build.gradle ==="
-          head -60 android/app/build.gradle
-
       - name: Add ffmpeg-kit community fork dependency
         run: |
           # ffmpeg-kit retired Apr 2025 — use community fork on Maven Central
+          # com.moizhassan.ffmpeg:ffmpeg-kit-16kb is actively maintained and API-compatible
           sed -i '/dependencies {/a\    implementation("com.moizhassan.ffmpeg:ffmpeg-kit-16kb:6.1.1")' android/app/build.gradle
-          echo "✅ ffmpeg-kit-16kb added"
+          echo "=== Added ffmpeg-kit dependency ==="
+          grep "ffmpeg\|moizhassan" android/app/build.gradle || true
 
       - name: Copy FFmpegPlugin.kt into Android project
         run: |
@@ -125,11 +106,11 @@ jobs:
           files: android/app/build/outputs/apk/debug/app-debug.apk
           body: |
             🎵 **AudioShift Pro — Latest Build**
-            
+
             📦 Build: #${{ github.run_number }}
             📅 Date: ${{ github.event.head_commit.timestamp }}
             💬 Change: ${{ github.event.head_commit.message }}
-            
+
             **Install:**
             1. Download `app-debug.apk` below
             2. Tap the file on your phone
@@ -152,6 +133,6 @@ jobs:
           📅 ${DATE}
           📦 Size: ${APK_SIZE}
           💬 ${COMMIT_MSG}
-          
+
           Tap the file above to install." \
             --max-time 120
