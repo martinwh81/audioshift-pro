@@ -3476,9 +3476,10 @@ convertBtn.addEventListener('click', async () => {
         const result = await _FFmpeg.convert({ command: cmd });
         _FFmpeg.removeAllListeners('ffmpegProgress');
 
+        console.log('[FFmpeg] result:', JSON.stringify(result));
         if (!result.success) {
-          console.error('[FFmpeg] failed:', result.error);
-          throw new Error('FFmpeg: ' + result.error);
+          console.error('[FFmpeg] failed:', result.error, 'logs:', result.logs);
+          throw new Error('FFmpeg: ' + (result.error || 'unknown') + ' logs: ' + (result.logs || ''));
         }
 
         ts('FFmpeg encode done → ' + outPath);
@@ -3490,8 +3491,8 @@ convertBtn.addEventListener('click', async () => {
         return new Blob([], { type: 'audio/mpeg' }); // marker — file is on disk
 
       } catch(e) {
-        console.error('[FFmpeg] error, falling back to JS:', e.message);
-        ts('FFmpeg failed — falling back to JS encoder');
+        console.error('[FFmpeg] error, falling back to JS:', e.message, JSON.stringify(e));
+        ts('FFmpeg failed (' + e.message + ') — falling back to JS encoder');
         // Fall through to JS encoding below
       }
     }
