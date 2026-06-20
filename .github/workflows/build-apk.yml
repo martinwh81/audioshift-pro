@@ -77,33 +77,43 @@ jobs:
 
       - name: Register FFmpegPlugin in MainActivity
         run: |
-          # Find MainActivity.kt wherever Capacitor placed it
-          MAIN=$(find android -name "MainActivity.kt" 2>/dev/null | head -1)
-          if [ -z "$MAIN" ]; then
-            echo "❌ MainActivity.kt not found — searching for any MainActivity:"
-            find android -name "MainActivity*" 2>/dev/null
-            echo "All .kt files:"
-            find android -name "*.kt" 2>/dev/null
-            echo "All .java files:"
-            find android -name "*.java" 2>/dev/null
-            exit 1
-          fi
-          echo "✅ Found MainActivity at: $MAIN"
-          # Get package name from MainActivity.kt
-          PKG=$(grep "^package" "$MAIN" | awk '{print $2}')
-          echo "📦 Package: $PKG"
-          # Add import using actual package name
-          grep -q "FFmpegPlugin" "$MAIN" || sed -i "/^package /a import ${PKG}.FFmpegPlugin" "$MAIN"
-          # Inject registerPlugin into onCreate
-          if ! grep -q "registerPlugin(FFmpegPlugin" "$MAIN"; then
-            sed -i 's|class MainActivity : BridgeActivity() {|class MainActivity : BridgeActivity() {\n  override fun onCreate(savedInstanceState: android.os.Bundle?) {\n    registerPlugin(FFmpegPlugin::class.java)\n    super.onCreate(savedInstanceState)\n  }|' "$MAIN"
-          fi
-          echo "=== MainActivity.kt after patch ==="
-          cat "$MAIN"
-          # Also copy FFmpegPlugin.kt to same directory as MainActivity.kt
+          # Find MainActivity — could be .java or .kt depending on Capacitor version
+          MAIN=$(find android/app/src/main/java -name "MainActivity.java" -o -name "MainActivity.kt" 2>/dev/null | head -1)
+          echo "✅ Found: $MAIN"
           MAIN_DIR=$(dirname "$MAIN")
+          echo "📁 Dir: $MAIN_DIR"
+
+          # Copy FFmpegPlugin.kt to same directory
           cp android-src/FFmpegPlugin/FFmpegPlugin.kt "$MAIN_DIR/"
           echo "✅ FFmpegPlugin.kt copied to $MAIN_DIR"
+
+          # Get package name
+          PKG=$(grep "^package" "$MAIN" | awk '{print $2}' | tr -d ';')
+          echo "📦 Package: $PKG"
+
+          if [[ "$MAIN" == *.java ]]; then
+            echo "--- Patching Java MainActivity ---"
+            # Add import after package line
+            grep -q "FFmpegPlugin" "$MAIN" || sed -i "/^package /a import ${PKG}.FFmpegPlugin;" "$MAIN"
+            # Add registerPlugin call inside onCreate
+            if ! grep -q "registerPlugin(FFmpegPlugin" "$MAIN"; then
+              sed -i 's|super.onCreate(savedInstanceState);|registerPlugin(FFmpegPlugin.class);
+        super.onCreate(savedInstanceState);|' "$MAIN"
+            fi
+          else
+            echo "--- Patching Kotlin MainActivity ---"
+            grep -q "FFmpegPlugin" "$MAIN" || sed -i "/^package /a import ${PKG}.FFmpegPlugin" "$MAIN"
+            if ! grep -q "registerPlugin(FFmpegPlugin" "$MAIN"; then
+              sed -i 's|class MainActivity : BridgeActivity() {|class MainActivity : BridgeActivity() {
+  override fun onCreate(savedInstanceState: android.os.Bundle?) {
+    registerPlugin(FFmpegPlugin::class.java)
+    super.onCreate(savedInstanceState)
+  }|' "$MAIN"
+            fi
+          fi
+
+          echo "=== MainActivity after patch ==="
+          cat "$MAIN"
 
 
       - name: Sync Capacitor
