@@ -94,15 +94,15 @@ jobs:
             echo "--- Patching Java MainActivity ---"
             # Add import after package line
             grep -q "FFmpegPlugin" "$MAIN" || sed -i "/^package /a import ${PKG}.FFmpegPlugin;" "$MAIN"
-            # Add registerPlugin call inside onCreate
+            # Replace empty class body {} with full onCreate method
             if ! grep -q "registerPlugin(FFmpegPlugin" "$MAIN"; then
-              sed -i 's|super.onCreate(savedInstanceState);|registerPlugin(FFmpegPlugin.class);\n        super.onCreate(savedInstanceState);|' "$MAIN"
+              sed -i 's|extends BridgeActivity {}|extends BridgeActivity {\n    @Override\n    public void onCreate(android.os.Bundle savedInstanceState) {\n        registerPlugin(FFmpegPlugin.class);\n        super.onCreate(savedInstanceState);\n    }\n}|' "$MAIN"
             fi
           else
             echo "--- Patching Kotlin MainActivity ---"
             grep -q "FFmpegPlugin" "$MAIN" || sed -i "/^package /a import ${PKG}.FFmpegPlugin" "$MAIN"
             if ! grep -q "registerPlugin(FFmpegPlugin" "$MAIN"; then
-              sed -i 's|class MainActivity : BridgeActivity() {|class MainActivity : BridgeActivity() {\n  override fun onCreate(savedInstanceState: android.os.Bundle?) {\n    registerPlugin(FFmpegPlugin::class.java)\n    super.onCreate(savedInstanceState)\n  }|' "$MAIN"
+              sed -i 's|class MainActivity : BridgeActivity() {}|class MainActivity : BridgeActivity() {\n  override fun onCreate(savedInstanceState: android.os.Bundle?) {\n    registerPlugin(FFmpegPlugin::class.java)\n    super.onCreate(savedInstanceState)\n  }\n}|' "$MAIN"
             fi
           fi
 
