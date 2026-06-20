@@ -3481,26 +3481,29 @@ convertBtn.addEventListener('click', async () => {
         }
 
         ts('FFmpeg encode done → ' + outPath);
-        setItemProgress(item.id, 92, 'Saving to Documents…');
+        setItemProgress(item.id, 92, 'Reading output…');
 
-        // Copy directly from cache to Documents/AudioShiftPro/ — no memory loading
-        await NativeFS.mkdir({ path: 'AudioShiftPro', directory: 'DOCUMENTS', recursive: true }).catch(() => {});
-        await NativeFS.copy({
-          from: outPath,
-          to: 'AudioShiftPro/' + safeName,
-          toDirectory: 'DOCUMENTS'
-        });
+        // Read output file from cache
+        const mimeMap = { mp3:'audio/mpeg', wav:'audio/wav', flac:'audio/flac', ogg:'audio/ogg', m4a:'audio/mp4', opus:'audio/ogg', aac:'audio/aac' };
+        const outMime = mimeMap[outExt] || 'audio/mpeg';
+
+        // Read output from cache via NativeFS (file:// fetch blocked in WebView)
+        const outFileData = await NativeFS.readFile({ path: outPath });
+        // Convert base64 to Blob efficiently
+        const b64str = outFileData.data;
+        const binaryStr = atob(b64str);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+        const outBlob = new Blob([bytes], { type: outMime });
+        console.log('[FFmpeg] output blob size:', outBlob.size);
 
         // Clean up cache files
         await NativeFS.deleteFile({ path: outPath }).catch(() => {});
         await NativeFS.deleteFile({ path: inputPath }).catch(() => {});
 
-        setItemProgress(item.id, 99, '✅ Saved');
+        setItemProgress(item.id, 95, '✅ Encoded via FFmpeg');
         item.outName = outName;
-        item.status = 'done';
-        item.blob = new Blob([], { type: 'audio/mpeg' }); // marker blob
-        updateFileItem(item.id);
-        return null; // signal finalize to skip normal save pipeline
+        return outBlob;
 
       } catch(e) {
         console.error('[FFmpeg] error, falling back to JS:', e.message, JSON.stringify(e));
@@ -3645,9 +3648,7 @@ convertBtn.addEventListener('click', async () => {
                 ts('encode START');
                 const blob = await encodeFile(item, buf, ts);
                 ts('encode DONE → finalize');
-                if (blob !== null) {
-                  await finalizeFile(item, blob);
-                }
+                await finalizeFile(item, blob);
                 ts('pipeline COMPLETE ✅');
               }
             }
