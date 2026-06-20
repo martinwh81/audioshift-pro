@@ -3444,6 +3444,11 @@ convertBtn.addEventListener('click', async () => {
         const outName  = (savePrefix.value || '') + item.file.name.replace(/\.[^.]+$/, '') + '.' + outExt;
         const outPath  = '/data/user/0/com.audioshiftpro.app/files/AudioShiftPro/' + outName.replace(/[^a-zA-Z0-9._() -]/g, '_');
 
+        // Ensure output directory exists before FFmpeg runs
+        try {
+          await NativeFS.mkdir({ path: 'AudioShiftPro', directory: 'DOCUMENTS', recursive: true });
+        } catch(e) { /* already exists is fine */ }
+
         // Build FFmpeg command with all settings
         const trimS = item.trimS || 0;
         const trimE = item.trimE || 0;
