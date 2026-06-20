@@ -1091,13 +1091,17 @@ function buildFFmpegCommand(inputPath, outputPath, settings) {
   // Normalize (FFmpeg loudnorm = true ITU-R BS.1770)
   if (doNorm) {
     if (normMode === 'lufs') {
-      filters.push('loudnorm=I=' + normTarget + ':TP=' + (tpLimit || -1.0) + ':LRA=11');
+      // LUFS range: -70 to -5, clamp normTarget
+      const lufsI = Math.max(-70, Math.min(-5, parseFloat(normTarget) || -14));
+      const lufsTP = Math.max(-9, Math.min(0, parseFloat(tpLimit) || -1.0));
+      filters.push('loudnorm=I=' + lufsI + ':TP=' + lufsTP + ':LRA=11');
     } else if (normMode === 'peak') {
-      // Use dynaudnorm for peak normalization
-      filters.push('dynaudnorm=p=1.0:m=100:s=0:g=15');
+      // Peak normalize using volume filter + dynaudnorm
+      filters.push('dynaudnorm=p=0.95:m=100:s=5:g=15');
     } else {
-      // RMS — use volume filter after measuring
-      filters.push('loudnorm=I=' + normTarget + ':TP=' + (tpLimit || -1.0));
+      // RMS — use loudnorm with safe defaults
+      const rmsI = Math.max(-70, Math.min(-5, parseFloat(normTarget) || -14));
+      filters.push('loudnorm=I=' + rmsI + ':TP=-1.0:LRA=11');
     }
   }
 
@@ -1112,6 +1116,7 @@ function buildFFmpegCommand(inputPath, outputPath, settings) {
   const cmd = [
     '-i "' + inputPath + '"',
     ssArg, toArg,
+    '-vn',  // strip cover art / video streams — avoids mjpeg conversion errors
     afArg, arArg, baArg,
     '-y "' + outputPath + '"',
   ].filter(Boolean).join(' ');
