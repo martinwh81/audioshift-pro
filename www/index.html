@@ -1120,14 +1120,19 @@ function buildFFmpegCommand(inputPath, outputPath, settings) {
   // Sample rate
   const arArg = (sampleRate && sampleRate > 0) ? '-ar ' + sampleRate : '';
 
-  // Bitrate
-  const baArg = bitrate ? '-b:a ' + bitrate + 'k' : '-b:a 320k';
+  // Codec and bitrate — lossless formats don't use bitrate
+  const losslessFormats = ['flac', 'wav', 'aiff'];
+  const outFmt = outputPath.split('.').pop().toLowerCase();
+  const isLossless = losslessFormats.includes(outFmt);
+  const baArg = isLossless ? '' : (bitrate ? '-b:a ' + bitrate + 'k' : '-b:a 320k');
+  // Explicit codec for m4a (ffmpeg defaults to aac but needs explicit for some builds)
+  const codecArg = outFmt === 'm4a' ? '-c:a aac' : '';
 
   const cmd = [
     '-i "' + inputPath + '"',
     ssArg, toArg,
-    '-vn',  // strip cover art / video streams — avoids mjpeg conversion errors
-    afArg, arArg, baArg,
+    '-vn',  // strip cover art / video streams
+    codecArg, afArg, arArg, baArg,
     '-y "' + outputPath + '"',
   ].filter(Boolean).join(' ');
 
@@ -3435,7 +3440,9 @@ convertBtn.addEventListener('click', async () => {
     ts('Encode start (' + fmt + ')');
 
     // ── FFmpeg native path (APK only) ──
-    if (isNative && _FFmpeg) {
+    // Skip FFmpeg for pitch shifting — asetrate+atempo has audible artifacts on harmonic content
+    // JS phase vocoder gives better quality for pitch-only shifts
+    if (isNative && _FFmpeg && semitones === 0) {
       ts('Encode via FFmpeg (native)');
       setItemProgress(item.id, 20, 'Converting (FFmpeg)…');
 
