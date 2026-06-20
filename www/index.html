@@ -3335,6 +3335,7 @@ convertBtn.addEventListener('click', async () => {
 
   // Sanity check: log semitones so we can verify sign
   console.log('[Convert] semitones:', semitones, 'fmt:', fmt, 'doNorm:', doNorm);
+  console.log('[Convert] isNative:', isNative, '_FFmpeg:', !!_FFmpeg, 'Capacitor:', !!window.Capacitor, 'plugins:', Object.keys(window.Capacitor?.Plugins||{}).join(','));
 
   // Helper: prepare one file on the main thread (decode/resample/trim/fade)
   async function prepareFile(item, ts) {
