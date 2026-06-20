@@ -72,15 +72,20 @@ jobs:
       - name: Register FFmpegPlugin in MainActivity
         run: |
           MAIN="android/app/src/main/java/com/audioshiftpro/app/MainActivity.kt"
-          if [ -f "$MAIN" ]; then
-            sed -i '/^package /a import com.audioshiftpro.app.FFmpegPlugin' "$MAIN"
-            sed -i 's/class MainActivity : BridgeActivity() {/class MainActivity : BridgeActivity() {\n  override fun onCreate(savedInstanceState: android.os.Bundle?) {\n    registerPlugin(FFmpegPlugin::class.java)\n    super.onCreate(savedInstanceState)\n  }/' "$MAIN"
-            echo "=== MainActivity.kt ==="
-            cat "$MAIN"
-          else
+          if [ ! -f "$MAIN" ]; then
             echo "❌ MainActivity.kt not found"
-            find android -name "MainActivity.kt" 2>/dev/null
+            find android -name "*.kt" 2>/dev/null
+            exit 1
           fi
+          # Add import line after package declaration
+          grep -q "FFmpegPlugin" "$MAIN" || sed -i '/^package /a import com.audioshiftpro.app.FFmpegPlugin' "$MAIN"
+          # Replace class declaration to add onCreate with registerPlugin
+          if ! grep -q "registerPlugin(FFmpegPlugin" "$MAIN"; then
+            sed -i 's|class MainActivity : BridgeActivity() {|class MainActivity : BridgeActivity() {\n  override fun onCreate(savedInstanceState: android.os.Bundle?) {\n    registerPlugin(FFmpegPlugin::class.java)\n    super.onCreate(savedInstanceState)\n  }|' "$MAIN"
+          fi
+          echo "=== MainActivity.kt after patch ==="
+          cat "$MAIN"
+
 
       - name: Sync Capacitor
         run: npx cap sync android
