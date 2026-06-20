@@ -3427,13 +3427,10 @@ convertBtn.addEventListener('click', async () => {
         const NativeFS = _Cap.Filesystem;
         if (!NativeFS) throw new Error('Filesystem plugin missing');
 
-        const safeName   = item.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const inSafeName = item.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
         const inputPath  = await (async () => {
-          // Write decoded audio back to a temp file — or use original file URI
-          // Best: use original file if we have a native URI
           if (item._nativeUri) return item._nativeUri.replace('file://', '');
-          // Fallback: write raw file to cache
-          const inUri  = await writeBlobToCache(safeName, item.file);
+          const inUri  = await writeBlobToCache(inSafeName, item.file);
           return inUri ? inUri.replace('file://', '') : null;
         })();
 
