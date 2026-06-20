@@ -1632,16 +1632,18 @@ function updateFileItem(id) {
   el.className = 'f-item' + (item.status !== 'pending' ? ' ' + item.status : '');
   if (item.status === 'done') {
     ico.textContent = '✅'; ico.className = 'f-ico done';
-    info.textContent = item.outName + ' · ' + fmtBytes(item.blob.size);
+    const blobSize = item._nativeSavedUri ? null : item.blob?.size;
+    info.textContent = item.outName + (blobSize != null ? ' · ' + fmtBytes(blobSize) : ' · saved');
     prog.style.width = '100%';
-    if (item.blob) {
+    if (item.blob || item._nativeSavedUri) {
       if (isNative) {
-        // On APK — download link doesn't work in WebView, use save button instead
         dl.href = '#';
         dl.download = '';
         dl.onclick = async (e) => {
           e.preventDefault();
           dl.textContent = '⏳';
+          // If FFmpeg saved directly, file is already in Documents
+          if (item._nativeSavedUri) { dl.textContent = '✅ Saved'; setTimeout(() => { dl.textContent = '⬇'; }, 2000); return; }
           const ok = await nativeSaveFile(item.blob, item.outName);
           dl.textContent = ok ? '✅' : '✗';
           setTimeout(() => { dl.textContent = '⬇'; }, 2000);
@@ -1703,7 +1705,7 @@ function refreshUI() {
   zipBtn.classList.toggle('show', allDone && saveMode === 'zip');
   // Share button shown when any files are done
   // Show inline share button with done file count
-  const _doneCount = files.filter(f => f.status === 'done' && f.blob).length;
+  const _doneCount = files.filter(f => f.status === 'done' && (f.blob || f._nativeSavedUri)).length;
   if (shareAllBtn) {
     const showShare = _doneCount > 0 && (!isNative || nativeSaveMode === 'share' || nativeSaveMode === 'zip');
     shareAllBtn.classList.toggle('show', showShare);
@@ -3735,7 +3737,7 @@ function setOverall(done, total, lbl) { overallFill.style.width=Math.round(done/
 
 // ── ZIP ──
 zipBtn.addEventListener('click', async () => {
-  const doneFiles = files.filter(f => f.status === 'done' && f.blob);
+  const doneFiles = files.filter(f => f.status === 'done' && (f.blob || f._nativeSavedUri));
   if (!doneFiles.length) return;
   zipBtn.textContent = '⏳ Zipping…'; zipBtn.disabled = true;
   try {
@@ -6668,7 +6670,7 @@ shareAllBtn.addEventListener('click', () => shareFiles());
 // Save button (APK only) — saves all done files to Documents/AudioShiftPro/
 if (saveAllBtn) {
   saveAllBtn.addEventListener('click', async () => {
-    const done = files.filter(f => f.status === 'done' && f.blob);
+    const done = files.filter(f => f.status === 'done' && (f.blob || f._nativeSavedUri));
     if (!done.length) return;
     saveAllBtn.textContent = '⏳ Saving…'; saveAllBtn.disabled = true;
     await nativeSaveAll(done);
@@ -6678,7 +6680,7 @@ if (saveAllBtn) {
 }
 
 async function shareFiles() {
-  const done = files.filter(f => f.status === 'done' && f.blob);
+  const done = files.filter(f => f.status === 'done' && (f.blob || f._nativeSavedUri));
   if (!done.length) return;
   const btn = shareAllBtn;
   const origText = btn?.textContent || '📤 Share';
