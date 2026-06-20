@@ -85,14 +85,23 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
+      - name: Verify index.html bundled correctly
+        run: |
+          BUNDLED="android/app/src/main/assets/public/index.html"
+          echo "=== Checking bundled index.html ==="
+          grep -n "registerPlugin\|FFmpegConverter\|_FFmpeg" "$BUNDLED" | head -10 || echo "❌ No FFmpeg lines found in bundled file"
+          wc -l "$BUNDLED"
+
       - name: Make Gradle wrapper executable
         run: chmod +x android/gradlew
 
       - name: Restrict ABI to arm64-v8a (reduce APK size under 50MB)
         run: |
-          sed -i '/defaultConfig {/a\        ndk { abiFilters "arm64-v8a" }' android/app/build.gradle
-          echo "✅ abiFilters added"
-          grep -A 2 "abiFilters" android/app/build.gradle || echo "⚠️ not found"
+          # Use Gradle DSL append — most reliable across all Capacitor-generated build.gradle formats
+          echo '' >> android/app/build.gradle
+          echo 'android.defaultConfig.ndk.abiFilters = ["arm64-v8a"]' >> android/app/build.gradle
+          echo "✅ abiFilters appended"
+          grep "abiFilters" android/app/build.gradle || echo "⚠️ not found"
 
       - name: Build Debug APK
         run: |
@@ -126,19 +135,35 @@ jobs:
 
       - name: Send APK to Telegram
         if: success()
+        continue-on-error: true
         run: |
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
           APK_SIZE=$(du -sh "$APK" | cut -f1)
+          echo "APK size: $APK_SIZE"
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           BUILD_NUM="${{ github.run_number }}"
           DATE=$(date '+%d %b %Y %H:%M UTC')
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
-            -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -F document=@"$APK" \
-            -F caption="🎵 AudioShift Pro — Build #${BUILD_NUM}
+          # Check size — Telegram bot limit is 50MB
+          SIZE_BYTES=$(stat -c%s "$APK")
+          if [ "$SIZE_BYTES" -gt 52428800 ]; then
+            echo "⚠️ APK too large for Telegram (${APK_SIZE}), sending download link instead"
+            curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+              -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+              -F text="🎵 AudioShift Pro — Build #${BUILD_NUM}
+          📅 ${DATE}
+          📦 Size: ${APK_SIZE} (too large for Telegram)
+          💬 ${COMMIT_MSG}
+
+          📥 Download: https://github.com/${{ github.repository }}/releases/latest/download/app-debug.apk"
+          else
+            curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
+              -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+              -F document=@"$APK" \
+              -F caption="🎵 AudioShift Pro — Build #${BUILD_NUM}
           📅 ${DATE}
           📦 Size: ${APK_SIZE}
           💬 ${COMMIT_MSG}
 
           Tap the file above to install." \
-            --max-time 120
+              --max-time 120
+          fi
