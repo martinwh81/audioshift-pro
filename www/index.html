@@ -3492,7 +3492,7 @@ convertBtn.addEventListener('click', async () => {
         await NativeFS.mkdir({ path: 'AudioShiftPro', directory: 'DOCUMENTS', recursive: true }).catch(() => {});
 
         // Check for conflict before copying
-        const destPath = 'AudioShiftPro/' + safeName;
+        const destPath = 'AudioShiftPro/' + outName.replace(/[^a-zA-Z0-9._() -]/g, '_');
         let finalName = outName;
         let destFinalPath = destPath;
         let fileExists = false;
@@ -3539,7 +3539,14 @@ convertBtn.addEventListener('click', async () => {
         setItemProgress(item.id, 99, '✅ Saved');
         item.outName = finalName;
         item.status = 'done';
-        item.blob = new Blob([], { type: outMime });
+        // Store native URI so Share can access the file
+        const savedDocPath = 'AudioShiftPro/' + destFinalPath.split('/').pop();
+        try {
+          const statRes = await NativeFS.getUri({ path: savedDocPath, directory: 'DOCUMENTS' });
+          item._nativeSavedUri = statRes.uri;
+          console.log('[FFmpeg] saved URI:', item._nativeSavedUri);
+        } catch(e) { console.warn('[FFmpeg] getUri failed:', e.message); }
+        item.blob = new Blob([], { type: outMime }); // marker
         updateFileItem(item.id);
         return null; // skip finalize — already saved
 
@@ -4125,6 +4132,12 @@ async function nativeShareFiles(doneFiles) {
 
   const uris = [];
   for (const f of doneFiles) {
+    // If FFmpeg saved directly and stored native URI, use it
+    if (f._nativeSavedUri) {
+      console.log('[share] using native URI:', f._nativeSavedUri);
+      uris.push(f._nativeSavedUri);
+      continue;
+    }
     if (!f.blob?.size) { console.warn('[share] empty blob:', f.outName); continue; }
     const safeName = f.outName.replace(/[^a-zA-Z0-9._-]/g, '_');
     console.log('[share] caching:', f.outName, '→', safeName);
@@ -6676,7 +6689,24 @@ async function shareFiles() {
       if (typeof JSZip === 'undefined') { alert('ZIP library not loaded. Check internet connection.'); return; }
       if (btn) btn.textContent = '⏳ Zipping…';
       const zip = new JSZip();
-      done.forEach(f => { console.log('[zip] adding:', f.outName, f.blob.size); zip.file(f.outName, f.blob); });
+      // For FFmpeg-saved files, read from Documents via NativeFS
+      const NativeFSzip = _Cap.Filesystem;
+      for (const f of done) {
+        if (f._nativeSavedUri && NativeFSzip) {
+          try {
+            const docPath = 'AudioShiftPro/' + f.outName.replace(/[^a-zA-Z0-9._() -]/g, '_');
+            const fd = await NativeFSzip.readFile({ path: docPath, directory: 'DOCUMENTS' });
+            const bin = atob(fd.data);
+            const ba = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) ba[i] = bin.charCodeAt(i);
+            console.log('[zip] adding from Documents:', f.outName, ba.length);
+            zip.file(f.outName, ba);
+          } catch(e) { console.warn('[zip] could not read FFmpeg file:', e.message); }
+        } else if (f.blob?.size) {
+          console.log('[zip] adding:', f.outName, f.blob.size);
+          zip.file(f.outName, f.blob);
+        }
+      }
       const zb = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
       const zipBlob = new Blob([zb], { type: 'application/zip' });
       console.log('[zip] ZIP created, size:', zipBlob.size, 'files:', done.length);
