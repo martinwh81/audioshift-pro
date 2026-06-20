@@ -39,6 +39,15 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
+      - name: List generated Android Kotlin/Java files
+        run: |
+          echo "=== All .kt files ==="
+          find android -name "*.kt" 2>/dev/null || echo "none"
+          echo "=== All .java files ==="
+          find android -name "*.java" 2>/dev/null || echo "none"
+          echo "=== MainActivity search ==="
+          find android -name "MainActivity*" 2>/dev/null || echo "none"
+
       - name: Configure Android build settings
         run: |
           sed -i 's/minSdkVersion = .*/minSdkVersion = 24/' android/variables.gradle
@@ -71,8 +80,12 @@ jobs:
           # Find MainActivity.kt wherever Capacitor placed it
           MAIN=$(find android -name "MainActivity.kt" 2>/dev/null | head -1)
           if [ -z "$MAIN" ]; then
-            echo "❌ MainActivity.kt not found anywhere"
+            echo "❌ MainActivity.kt not found — searching for any MainActivity:"
+            find android -name "MainActivity*" 2>/dev/null
+            echo "All .kt files:"
             find android -name "*.kt" 2>/dev/null
+            echo "All .java files:"
+            find android -name "*.java" 2>/dev/null
             exit 1
           fi
           echo "✅ Found MainActivity at: $MAIN"
