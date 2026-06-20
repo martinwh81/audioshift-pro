@@ -1077,10 +1077,20 @@ function buildFFmpegCommand(inputPath, outputPath, settings) {
     filters.push('atempo=' + s.toFixed(4));
   }
 
-  // Pitch shift (rubberband — high quality)
+  // Pitch shift using asetrate+atempo (no rubberband needed)
+  // asetrate changes pitch by resampling, atempo corrects speed back to normal
   if (semitones !== 0) {
     const ratio = Math.pow(2, semitones / 12);
-    filters.push('rubberband=pitch=' + ratio.toFixed(6));
+    const sampleRate48k = 48000; // typical input sample rate
+    const newRate = Math.round(sampleRate48k * ratio);
+    // asetrate shifts pitch, atempo restores original speed
+    filters.push('asetrate=' + newRate);
+    filters.push('aresample=' + sampleRate48k);
+    // atempo to correct speed (ratio must be 0.5-2.0, chain if needed)
+    let tempoRatio = 1.0 / ratio;
+    while (tempoRatio > 2.0) { filters.push('atempo=2.0'); tempoRatio /= 2.0; }
+    while (tempoRatio < 0.5) { filters.push('atempo=0.5'); tempoRatio *= 2.0; }
+    filters.push('atempo=' + tempoRatio.toFixed(6));
   }
 
   // Fade in/out
