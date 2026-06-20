@@ -3436,11 +3436,17 @@ convertBtn.addEventListener('click', async () => {
 
         if (!inputPath) throw new Error('Could not get input path');
 
-        // Output path — FFmpeg writes to cache (always exists), then we copy to Documents
+        // Output path — FFmpeg writes directly to app files dir (no spaces in path)
         const outExt   = item._extOverride || fmt;
         const outName  = (savePrefix.value || '') + item.file.name.replace(/\.[^.]+$/, '') + '.' + outExt;
-        const safeName = outName.replace(/[^a-zA-Z0-9._() -]/g, '_');
-        const outPath  = '/data/user/0/com.audioshiftpro.app/cache/' + safeName;
+        const safeName = outName.replace(/[^a-zA-Z0-9._-]/g, '_');
+        // Use files dir directly — Android allows app to write here without mkdir
+        const outDir   = '/data/user/0/com.audioshiftpro.app/files/AudioShiftPro';
+        const outPath  = outDir + '/' + safeName;
+        // Create output dir via shell if possible
+        try { await _Cap.CapacitorHttp?.request({ method: 'GET', url: 'file://' + outDir }); } catch(e) {}
+        // Use NativeFS mkdir as fallback
+        await NativeFS.mkdir({ path: 'AudioShiftPro', directory: 'LIBRARY', recursive: true }).catch(() => {});
 
         // Build FFmpeg command with all settings
         const trimS = item.trimS || 0;
@@ -3481,19 +3487,11 @@ convertBtn.addEventListener('click', async () => {
         }
 
         ts('FFmpeg encode done → ' + outPath);
-        setItemProgress(item.id, 90, 'Saving to Documents…');
-
-        // Read from cache and write to Documents/AudioShiftPro/ via NativeFS
-        const cacheData = await NativeFS.readFile({ path: outPath.replace('file://', '') });
-        await NativeFS.mkdir({ path: 'AudioShiftPro', directory: 'DOCUMENTS', recursive: true }).catch(() => {});
-        await NativeFS.writeFile({ path: 'AudioShiftPro/' + safeName, data: cacheData.data, directory: 'DOCUMENTS', recursive: true });
-        // Clean up cache files
-        await NativeFS.deleteFile({ path: outPath.replace('file://', '') }).catch(() => {});
-        await NativeFS.deleteFile({ path: inputPath.replace('file://', '') }).catch(() => {});
-
+        // Clean up input cache file
+        await NativeFS.deleteFile({ path: inputPath }).catch(() => {});
         setItemProgress(item.id, 95, '✅ Converted');
         item._ffmpegOutputPath = outPath;
-        item.outName = safeName;
+        item.outName = outName;
         return new Blob([], { type: 'audio/mpeg' }); // marker — file is on disk
 
       } catch(e) {
