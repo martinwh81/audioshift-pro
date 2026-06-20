@@ -63,28 +63,38 @@ jobs:
 
       - name: Copy FFmpegPlugin.kt into Android project
         run: |
-          PLUGIN_DIR="android/app/src/main/java/com/audioshiftpro/app"
-          mkdir -p "$PLUGIN_DIR"
-          cp android-src/FFmpegPlugin/FFmpegPlugin.kt "$PLUGIN_DIR/"
-          echo "✅ FFmpegPlugin.kt copied"
-          ls -la "$PLUGIN_DIR/"
+          # Just verify source file exists — actual copy happens after MainActivity is found
+          ls -la android-src/FFmpegPlugin/FFmpegPlugin.kt && echo "✅ Source FFmpegPlugin.kt ready"
 
       - name: Register FFmpegPlugin in MainActivity
         run: |
-          MAIN="android/app/src/main/java/com/audioshiftpro/app/MainActivity.kt"
-          if [ ! -f "$MAIN" ]; then
-            echo "❌ MainActivity.kt not found"
+          # Find MainActivity.kt wherever Capacitor placed it
+          MAIN=$(find android -name "MainActivity.kt" 2>/dev/null | head -1)
+          if [ -z "$MAIN" ]; then
+            echo "❌ MainActivity.kt not found anywhere"
             find android -name "*.kt" 2>/dev/null
             exit 1
           fi
-          # Add import line after package declaration
-          grep -q "FFmpegPlugin" "$MAIN" || sed -i '/^package /a import com.audioshiftpro.app.FFmpegPlugin' "$MAIN"
-          # Replace class declaration to add onCreate with registerPlugin
+          echo "✅ Found MainActivity at: $MAIN"
+          # Get package name from MainActivity.kt
+          PKG=$(grep "^package" "$MAIN" | awk '{print $2}')
+          echo "📦 Package: $PKG"
+          # Add import using actual package name
+          grep -q "FFmpegPlugin" "$MAIN" || sed -i "/^package /a import ${PKG}.FFmpegPlugin" "$MAIN"
+          # Inject registerPlugin into onCreate
           if ! grep -q "registerPlugin(FFmpegPlugin" "$MAIN"; then
-            sed -i 's|class MainActivity : BridgeActivity() {|class MainActivity : BridgeActivity() {\n  override fun onCreate(savedInstanceState: android.os.Bundle?) {\n    registerPlugin(FFmpegPlugin::class.java)\n    super.onCreate(savedInstanceState)\n  }|' "$MAIN"
+            sed -i 's|class MainActivity : BridgeActivity() {|class MainActivity : BridgeActivity() {
+  override fun onCreate(savedInstanceState: android.os.Bundle?) {
+    registerPlugin(FFmpegPlugin::class.java)
+    super.onCreate(savedInstanceState)
+  }|' "$MAIN"
           fi
           echo "=== MainActivity.kt after patch ==="
           cat "$MAIN"
+          # Also copy FFmpegPlugin.kt to same directory as MainActivity.kt
+          MAIN_DIR=$(dirname "$MAIN")
+          cp android-src/FFmpegPlugin/FFmpegPlugin.kt "$MAIN_DIR/"
+          echo "✅ FFmpegPlugin.kt copied to $MAIN_DIR"
 
 
       - name: Sync Capacitor
