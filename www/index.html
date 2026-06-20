@@ -3517,21 +3517,23 @@ convertBtn.addEventListener('click', async () => {
           if (action === 'rename') {
             const dot = safeName.lastIndexOf('.');
             const base = dot >= 0 ? safeName.slice(0, dot) : safeName;
-            const ext  = dot >= 0 ? safeName.slice(dot) : '';
             const dotN = outName.lastIndexOf('.');
             const baseN = dotN >= 0 ? outName.slice(0, dotN) : outName;
             const extN  = dotN >= 0 ? outName.slice(dotN) : '';
             let n = 1;
             while (true) {
-              const cand = base + '_' + n + ext;
-              try { await NativeFS.stat({ path: 'AudioShiftPro/' + cand, directory: 'DOCUMENTS' }); n++; }
-              catch(e) { destFinalPath = 'AudioShiftPro/' + cand; finalName = baseN + ' (' + n + ')' + extN; break; }
+              const candName = baseN + ' (' + n + ')' + extN;
+              const candPath = 'AudioShiftPro/' + candName.replace(/[^a-zA-Z0-9._() -]/g, '_');
+              try { await NativeFS.stat({ path: candPath, directory: 'DOCUMENTS' }); n++; }
+              catch(e) { destFinalPath = candPath; finalName = candName; break; }
             }
           }
           // overwrite: destFinalPath unchanged, copy will replace
         }
 
-        await NativeFS.copy({ from: outPath, to: destFinalPath, toDirectory: 'DOCUMENTS' });
+        // NativeFS.copy needs relative paths with directory params
+        const cacheFileName = outPath.split('/').pop();
+        await NativeFS.copy({ from: cacheFileName, directory: 'CACHE', to: destFinalPath, toDirectory: 'DOCUMENTS' });
         console.log('[FFmpeg] saved to Documents/AudioShiftPro/' + finalName);
 
         // Clean up cache files
@@ -3542,12 +3544,17 @@ convertBtn.addEventListener('click', async () => {
         item.outName = finalName;
         item.status = 'done';
         // Store native URI so Share can access the file
-        const savedDocPath = 'AudioShiftPro/' + destFinalPath.split('/').pop();
+        const savedDocPath = destFinalPath; // already 'AudioShiftPro/filename'
         try {
           const statRes = await NativeFS.getUri({ path: savedDocPath, directory: 'DOCUMENTS' });
           item._nativeSavedUri = statRes.uri;
-          console.log('[FFmpeg] saved URI:', item._nativeSavedUri);
-        } catch(e) { console.warn('[FFmpeg] getUri failed:', e.message); }
+          item._nativeSavedDocPath = savedDocPath; // relative path for NativeFS reads
+          console.log('[FFmpeg] saved URI:', item._nativeSavedUri, 'docPath:', savedDocPath);
+        } catch(e) { 
+          // getUri failed — still store docPath for ZIP reads
+          item._nativeSavedDocPath = savedDocPath;
+          console.warn('[FFmpeg] getUri failed:', e.message); 
+        }
         item.blob = new Blob([], { type: outMime }); // marker
         updateFileItem(item.id);
         return null; // skip finalize — already saved
@@ -6696,7 +6703,10 @@ async function shareFiles() {
       for (const f of done) {
         if (f._nativeSavedUri && NativeFSzip) {
           try {
-            const docPath = 'AudioShiftPro/' + f.outName.replace(/[^a-zA-Z0-9._() -]/g, '_');
+            // Extract relative path from URI: content://...Documents/AudioShiftPro/filename
+            // Use getUri reverse: just read by known path
+            const docPath = f._nativeSavedDocPath || ('AudioShiftPro/' + f.outName.replace(/[^a-zA-Z0-9._() -]/g, '_'));
+            console.log('[zip] reading from Documents:', docPath);
             const fd = await NativeFSzip.readFile({ path: docPath, directory: 'DOCUMENTS' });
             const bin = atob(fd.data);
             const ba = new Uint8Array(bin.length);
