@@ -70,10 +70,9 @@ jobs:
           echo "=== Added ffmpeg-kit dependency ==="
           grep "ffmpeg\|moizhassan" android/app/build.gradle || true
 
-      - name: Copy FFmpegPlugin.kt into Android project
+      - name: Copy FFmpegPlugin.java into Android project
         run: |
-          # Just verify source file exists — actual copy happens after MainActivity is found
-          ls -la android-src/FFmpegPlugin/FFmpegPlugin.kt && echo "✅ Source FFmpegPlugin.kt ready"
+          ls -la android-src/FFmpegPlugin/FFmpegPlugin.java && echo "✅ Source FFmpegPlugin.java ready"
 
       - name: Register FFmpegPlugin in MainActivity
         run: |
@@ -84,7 +83,7 @@ jobs:
           echo "📁 Dir: $MAIN_DIR"
 
           # Copy FFmpegPlugin.kt to same directory
-          cp android-src/FFmpegPlugin/FFmpegPlugin.kt "$MAIN_DIR/"
+          cp android-src/FFmpegPlugin/FFmpegPlugin.java "$MAIN_DIR/"
           echo "✅ FFmpegPlugin.kt copied to $MAIN_DIR"
 
           # Get package name
