@@ -479,7 +479,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
           <option value="" selected>Keep original</option>
           <option value="16">16-bit</option>
           <option value="24">24-bit</option>
-          <option value="32">32-bit</option>
+          <option value="32" class="wav-only">32-bit (WAV only)</option>
         </select>
       </div>
     </div>
@@ -1415,6 +1415,10 @@ fmtGrid.addEventListener('click', e => {
   const lossless = selectedFmt === 'flac' || selectedFmt === 'wav';
   bitrateSel.disabled = lossless;
   if (bitDepthGroup) bitDepthGroup.style.display = lossless ? '' : 'none';
+  // FLAC max is 24-bit; hide 32-bit option for FLAC
+  const opt32 = bitDepthSel?.querySelector('.wav-only');
+  if (opt32) opt32.style.display = selectedFmt === 'wav' ? '' : 'none';
+  if (selectedFmt === 'flac' && bitDepthSel?.value === '32') bitDepthSel.value = '';
   mergeExt.textContent = '.' + (selectedFmt === 'aac' ? 'aac' : selectedFmt);
 });
 speedEnabled.addEventListener('change', () => {
