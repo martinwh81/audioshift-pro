@@ -473,6 +473,15 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
           <option value="48000">48 000 Hz</option>
         </select>
       </div>
+      <div class="sel-group" id="bitDepthGroup" style="display:none;">
+        <label>Bit Depth</label>
+        <select id="bitDepthSel">
+          <option value="" selected>Keep original</option>
+          <option value="pcm_s16le">16-bit</option>
+          <option value="pcm_s24le">24-bit</option>
+          <option value="pcm_s32le">32-bit</option>
+        </select>
+      </div>
     </div>
     <div style="margin-top:10px;">
       <div class="sl-header">
@@ -1063,7 +1072,7 @@ console.log('[init] FFmpegConverter available:', !!_FFmpeg);
 function buildFFmpegCommand(inputPath, outputPath, settings) {
   const filters = [];
   const { semitones, speed, doNorm, normMode, normTarget, tpLimit,
-          trimStart, trimEnd, fadeIn, fadeOut, bitrate, sampleRate } = settings;
+          trimStart, trimEnd, fadeIn, fadeOut, bitrate, sampleRate, bitDepth } = settings;
 
   // Trim args (input-side seek — fastest method)
   const ssArg = trimStart > 0 ? '-ss ' + trimStart.toFixed(3) : '';
@@ -1126,7 +1135,9 @@ function buildFFmpegCommand(inputPath, outputPath, settings) {
   const isLossless = losslessFormats.includes(outFmt);
   const baArg = isLossless ? '' : (bitrate ? '-b:a ' + bitrate + 'k' : '-b:a 320k');
   // Explicit codec for m4a (ffmpeg defaults to aac but needs explicit for some builds)
-  const codecArg = outFmt === 'm4a' ? '-c:a aac' : '';
+  const codecArg = outFmt === 'm4a' ? '-c:a aac'
+    : (isLossless && bitDepth) ? '-c:a ' + bitDepth
+    : '';
 
   const cmd = [
     '-i "' + inputPath + '"',
@@ -1220,6 +1231,8 @@ const clearAllBtn  = document.getElementById('clearAllBtn');
 const fmtGrid      = document.getElementById('fmtGrid');
 const bitrateSel   = document.getElementById('bitrateSel');
 const srSel        = document.getElementById('srSel');
+const bitDepthSel  = document.getElementById('bitDepthSel');
+const bitDepthGroup= document.getElementById('bitDepthGroup');
 const speedRange   = document.getElementById('speedRange');
 const speedEnabled = document.getElementById('speedEnabled');
 const speedV       = document.getElementById('speedV');
@@ -1362,6 +1375,7 @@ fmtGrid.addEventListener('click', e => {
   b.classList.add('sel'); selectedFmt = b.dataset.f;
   const lossless = selectedFmt === 'flac' || selectedFmt === 'wav';
   bitrateSel.disabled = lossless;
+  if (bitDepthGroup) bitDepthGroup.style.display = lossless ? '' : 'none';
   mergeExt.textContent = '.' + (selectedFmt === 'aac' ? 'aac' : selectedFmt);
 });
 speedEnabled.addEventListener('change', () => {
@@ -2736,6 +2750,7 @@ function applyPreset(p) {
   bitrateSel.value = p.bitrate;
   const lossless = selectedFmt==='flac'||selectedFmt==='wav';
   bitrateSel.disabled = lossless;
+  if (bitDepthGroup) bitDepthGroup.style.display = lossless ? '' : 'none';
   // Sample rate
   srSel.value = p.sampleRate;
   // Speed
@@ -3486,6 +3501,7 @@ convertBtn.addEventListener('click', async () => {
           fadeOut:    foSec,
           bitrate:    br,
           sampleRate: parseInt(document.getElementById('sampleRate')?.value) || 0,
+          bitDepth: bitDepthSel?.value || '',
         });
 
         // Progress listener
