@@ -1124,8 +1124,6 @@ function buildFFmpegCommand(inputPath, outputPath, settings) {
     }
   }
 
-  const afArg = filters.length ? '-af "' + filters.join(',') + '"' : '';
-
   // Sample rate
   const arArg = (sampleRate && sampleRate > 0) ? '-ar ' + sampleRate : '';
 
@@ -1158,6 +1156,9 @@ function buildFFmpegCommand(inputPath, outputPath, settings) {
     else if (bitDepth === '32') { codecArg = '-c:a pcm_s32le'; filters.push('aformat=sample_fmts=s32'); }
     else                        { codecArg = '-c:a pcm_s16le'; }
   }
+
+  // Build audio filter arg AFTER codec section (aformat may be added above)
+  const afArg = filters.length ? '-af "' + filters.join(',') + '"' : '';
 
   // Metadata tags
   const metaArgs = [];
