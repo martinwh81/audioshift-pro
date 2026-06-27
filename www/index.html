@@ -477,9 +477,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
         <label>Bit Depth</label>
         <select id="bitDepthSel">
           <option value="" selected>Keep original</option>
-          <option value="pcm_s16le">16-bit</option>
-          <option value="pcm_s24le">24-bit</option>
-          <option value="pcm_s32le">32-bit</option>
+          <option value="16">16-bit</option>
+          <option value="24">24-bit</option>
+          <option value="32">32-bit</option>
         </select>
       </div>
     </div>
@@ -1134,16 +1134,27 @@ function buildFFmpegCommand(inputPath, outputPath, settings) {
   const outFmt = outputPath.split('.').pop().toLowerCase();
   const isLossless = losslessFormats.includes(outFmt);
   const baArg = isLossless ? '' : (bitrate ? '-b:a ' + bitrate + 'k' : '-b:a 320k');
-  // Explicit codec for m4a (ffmpeg defaults to aac but needs explicit for some builds)
-  const codecArg = outFmt === 'm4a' ? '-c:a aac'
-    : (isLossless && bitDepth) ? '-c:a ' + bitDepth
-    : '';
+  // Codec and bit depth args
+  let codecArg = '';
+  let bitDepthArg = '';
+  if (outFmt === 'm4a') {
+    codecArg = '-c:a aac';
+  } else if (outFmt === 'flac' && bitDepth) {
+    // FLAC: use -bits_per_raw_sample and -sample_fmt
+    const flacFmt = bitDepth === '32' ? 's32' : bitDepth === '24' ? 's32' : 's16';
+    const bitsArg = bitDepth === '24' ? '24' : bitDepth;
+    bitDepthArg = '-sample_fmt ' + flacFmt + ' -bits_per_raw_sample ' + bitsArg;
+  } else if (outFmt === 'wav' && bitDepth) {
+    // WAV: use pcm codec directly
+    const wavCodec = bitDepth === '16' ? 'pcm_s16le' : bitDepth === '24' ? 'pcm_s24le' : 'pcm_s32le';
+    codecArg = '-c:a ' + wavCodec;
+  }
 
   const cmd = [
     '-i "' + inputPath + '"',
     ssArg, toArg,
     '-vn',  // strip cover art / video streams
-    codecArg, afArg, arArg, baArg,
+    codecArg, bitDepthArg, afArg, arArg, baArg,
     '-y "' + outputPath + '"',
   ].filter(Boolean).join(' ');
 
