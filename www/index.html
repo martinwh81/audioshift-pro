@@ -1139,15 +1139,20 @@ function buildFFmpegCommand(inputPath, outputPath, settings) {
   let bitDepthArg = '';
   if (outFmt === 'm4a') {
     codecArg = '-c:a aac';
-  } else if (outFmt === 'flac' && bitDepth) {
-    // FLAC: use -bits_per_raw_sample and -sample_fmt
-    const flacFmt = bitDepth === '32' ? 's32' : bitDepth === '24' ? 's32' : 's16';
-    const bitsArg = bitDepth === '24' ? '24' : bitDepth;
-    bitDepthArg = '-sample_fmt ' + flacFmt + ' -bits_per_raw_sample ' + bitsArg;
-  } else if (outFmt === 'wav' && bitDepth) {
-    // WAV: use pcm codec directly
-    const wavCodec = bitDepth === '16' ? 'pcm_s16le' : bitDepth === '24' ? 'pcm_s24le' : 'pcm_s32le';
-    codecArg = '-c:a ' + wavCodec;
+  } else if (outFmt === 'flac') {
+    codecArg = '-c:a flac';
+    if (bitDepth === '16') {
+      bitDepthArg = '-sample_fmt s16 -bits_per_raw_sample 16';
+    } else if (bitDepth === '24') {
+      bitDepthArg = '-sample_fmt s32 -bits_per_raw_sample 24';
+    } else if (bitDepth === '32') {
+      bitDepthArg = '-sample_fmt s32 -bits_per_raw_sample 32';
+    }
+  } else if (outFmt === 'wav') {
+    if (bitDepth === '16')     { codecArg = '-c:a pcm_s16le'; }
+    else if (bitDepth === '24') { codecArg = '-c:a pcm_s24le'; }
+    else if (bitDepth === '32') { codecArg = '-c:a pcm_s32le'; }
+    else                        { codecArg = '-c:a pcm_s16le'; } // default WAV to 16-bit
   }
 
   // Metadata tags
@@ -1172,7 +1177,7 @@ function buildFFmpegCommand(inputPath, outputPath, settings) {
     coverInput,
     ssArg, toArg,
     mapArgs,
-    codecArg, bitDepthArg, afArg, arArg, baArg, metaArg,
+    arArg, codecArg, bitDepthArg, afArg, baArg, metaArg,
     '-y "' + outputPath + '"',
   ].filter(Boolean).join(' ');
 
