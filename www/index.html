@@ -1072,7 +1072,7 @@ console.log('[init] FFmpegConverter available:', !!_FFmpeg);
 function buildFFmpegCommand(inputPath, outputPath, settings) {
   const filters = [];
   const { semitones, speed, doNorm, normMode, normTarget, tpLimit,
-          trimStart, trimEnd, fadeIn, fadeOut, bitrate, sampleRate, bitDepth } = settings;
+          trimStart, trimEnd, fadeIn, fadeOut, bitrate, sampleRate, bitDepth, meta, coverCachePath } = settings;
 
   // Trim args (input-side seek — fastest method)
   const ssArg = trimStart > 0 ? '-ss ' + trimStart.toFixed(3) : '';
@@ -1150,11 +1150,29 @@ function buildFFmpegCommand(inputPath, outputPath, settings) {
     codecArg = '-c:a ' + wavCodec;
   }
 
+  // Metadata tags
+  const metaArgs = [];
+  if (meta) {
+    if (meta.title)  metaArgs.push('-metadata title="'  + meta.title.replace(/"/g,'\\"')  + '"');
+    if (meta.artist) metaArgs.push('-metadata artist="' + meta.artist.replace(/"/g,'\\"') + '"');
+    if (meta.album)  metaArgs.push('-metadata album="'  + meta.album.replace(/"/g,'\\"')  + '"');
+    if (meta.year)   metaArgs.push('-metadata date="'   + meta.year.replace(/"/g,'\\"')   + '"');
+    if (meta.track)  metaArgs.push('-metadata track="'  + meta.track.replace(/"/g,'\\"')  + '"');
+    if (meta.genre)  metaArgs.push('-metadata genre="'  + meta.genre.replace(/"/g,'\\"')  + '"');
+    if (meta.bpm)    metaArgs.push('-metadata bpm="'    + String(meta.bpm).replace(/"/g,'\\"') + '"');
+  }
+  const metaArg = metaArgs.join(' ');
+
+  // Cover art input and mapping
+  const coverInput = coverCachePath ? '-i "' + coverCachePath + '"' : '';
+  const mapArgs    = coverCachePath ? '-map 0:a -map 1:v -c:v copy -disposition:v attached_pic' : '-vn';
+
   const cmd = [
     '-i "' + inputPath + '"',
+    coverInput,
     ssArg, toArg,
-    '-vn',  // strip cover art / video streams
-    codecArg, bitDepthArg, afArg, arArg, baArg,
+    mapArgs,
+    codecArg, bitDepthArg, afArg, arArg, baArg, metaArg,
     '-y "' + outputPath + '"',
   ].filter(Boolean).join(' ');
 
@@ -3499,6 +3517,19 @@ convertBtn.addEventListener('click', async () => {
         const foSec = fadeOutEnabled.checked ? parseFloat(fadeOutRange.value) : 0;
         const tpEl  = document.getElementById('truePeakTarget');
 
+        // Write cover art to cache if present
+        let coverCachePath = null;
+        const artDataUrl = item.meta?.artDataUrl;
+        if (artDataUrl) {
+          try {
+            const artBase64 = artDataUrl.split(',')[1];
+            const artExt = artDataUrl.startsWith('data:image/png') ? 'png' : 'jpg';
+            coverCachePath = '/data/user/0/com.audioshiftpro.app/cache/cover_art.' + artExt;
+            await NativeFS.writeFile({ path: 'cover_art.' + artExt, data: artBase64, directory: 'CACHE' });
+            console.log('[FFmpeg] cover art written to cache:', coverCachePath);
+          } catch(e) { console.warn('[FFmpeg] cover art write failed:', e.message); coverCachePath = null; }
+        }
+
         const cmd = buildFFmpegCommand(inputPath, outPath, {
           semitones:  getPitch(),
           speed:      getSpeed(),
@@ -3513,6 +3544,8 @@ convertBtn.addEventListener('click', async () => {
           bitrate:    br,
           sampleRate: parseInt(document.getElementById('sampleRate')?.value) || 0,
           bitDepth: bitDepthSel?.value || '',
+          meta: item.meta ? { ...collectMetaFields(), ...item.meta } : collectMetaFields(),
+          coverCachePath,
         });
 
         // Progress listener
@@ -3588,6 +3621,7 @@ convertBtn.addEventListener('click', async () => {
         // Clean up cache files
         await NativeFS.deleteFile({ path: outPath }).catch(() => {});
         await NativeFS.deleteFile({ path: inputPath }).catch(() => {});
+        if (coverCachePath) await NativeFS.deleteFile({ path: coverCachePath }).catch(() => {});
 
         setItemProgress(item.id, 99, '✅ Saved');
         item.outName = finalName;
